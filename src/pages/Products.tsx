@@ -29,7 +29,7 @@ const Products = () => {
   const categorySlug = searchParams.get("category") || "all";
   const [selectedProductType, setSelectedProductType] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState("newest");
-  const [priceRange, setPriceRange] = useState([0, 35000]);
+  const [priceRange, setPriceRange] = useState([0, 100000]);
   const [showFilters, setShowFilters] = useState(false);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
@@ -118,7 +118,7 @@ const Products = () => {
   const clearFilters = () => {
     setSearch("");
     setSelectedProductType([]);
-    setPriceRange([0, 35000]);
+    setPriceRange([0, 100000]);
     setSortBy("newest");
     searchParams.delete("q");
     searchParams.delete("category");
@@ -287,13 +287,13 @@ const Products = () => {
                       value={priceRange}
                       onValueChange={setPriceRange}
                       min={0}
-                      max={35000}
+                      max={100000}
                       step={100}
                       className="mt-4"
                     />
                     <div className="flex justify-between text-xs text-muted-foreground mt-1">
                       <span>R0</span>
-                      <span>R35,000</span>
+                      <span>R100,000</span>
                     </div>
                   </div>
                 </div>
@@ -326,7 +326,7 @@ const Products = () => {
                         <X className="h-3 w-3" />
                       </Badge>
                     )}
-                    {(priceRange[0] > 0 || priceRange[1] < 35000) && (
+                    {(priceRange[0] > 0 || priceRange[1] < 100000) && (
                       <Badge
                         variant="secondary"
                         className="gap-1 cursor-pointer hover:bg-destructive hover:text-destructive-foreground"
