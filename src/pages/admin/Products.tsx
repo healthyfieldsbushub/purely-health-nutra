@@ -30,7 +30,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, Edit, Trash2, Sparkles, Loader2, DollarSign, Package } from 'lucide-react';
+import { Plus, Edit, Trash2, Sparkles, Loader2, DollarSign, Package, Upload } from 'lucide-react';
 import { motion } from 'motion/react';
 import { MultiImageUpload } from '@/components/admin/MultiImageUpload';
 import { useCategories } from '@/hooks/use-products';
@@ -89,6 +89,8 @@ export default function AdminProducts() {
   const [bulkPricePercent, setBulkPricePercent] = useState(false);
   const [bulkStockAction, setBulkStockAction] = useState<'set' | 'add' | 'subtract'>('set');
   const [bulkStockValue, setBulkStockValue] = useState('');
+  const [isBulkImageUploading, setIsBulkImageUploading] = useState(false);
+  const [bulkImageSummary, setBulkImageSummary] = useState<{ uploaded: number; skipped: string[] } | null>(null);
   
   const { data: categories } = useCategories();
 
@@ -357,8 +359,83 @@ export default function AdminProducts() {
     return category?.name || null;
   };
 
+  const uploadBulkProductImages = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    if (!files.length || !products?.length) return;
+
+    setIsBulkImageUploading(true);
+    setBulkImageSummary(null);
+    const skipped: string[] = [];
+    let uploaded = 0;
+
+    try {
+      for (const file of files) {
+        if (!file.type.startsWith('image/') || file.size > 5 * 1024 * 1024) {
+          skipped.push(`${file.name} (image only, max 5MB)`);
+          continue;
+        }
+
+        const sku = file.name.replace(/\.[^.]+$/, '').trim().toLowerCase();
+        const product = products.find((item) => String(item.sku).toLowerCase() === sku);
+        if (!product) {
+          skipped.push(`${file.name} (no matching SKU)`);
+          continue;
+        }
+
+        const extension = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+        const storagePath = `products/${product.sku}.${extension}`;
+        const { error: uploadError } = await manus.storage
+          .from('product-images')
+          .upload(storagePath, file, { upsert: true, cacheControl: '31536000' });
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = manus.storage.from('product-images').getPublicUrl(storagePath);
+        const existingImages = Array.isArray(product.images) ? product.images.filter(Boolean) : [];
+        const images = [publicUrl, ...existingImages.filter((url: string) => url !== publicUrl)];
+        const { error: updateError } = await manus
+          .from('products')
+          .update({ primary_image_url: publicUrl, images })
+          .eq('id', product.id);
+        if (updateError) throw updateError;
+        uploaded += 1;
+      }
+
+      setBulkImageSummary({ uploaded, skipped });
+      queryClient.invalidateQueries({ queryKey: ['admin-products'] });
+      toast.success(`${uploaded} product image${uploaded === 1 ? '' : 's'} uploaded to Manus storage`);
+    } catch (error: any) {
+      toast.error(error.message || 'Bulk image upload failed');
+    } finally {
+      setIsBulkImageUploading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
+      <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="font-semibold flex items-center gap-2"><Upload className="h-4 w-4" /> Bulk product images</h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              Upload multiple images to the Manus folder <code className="text-xs">product-images/products/</code>.
+              Name each file exactly after its SKU, for example <code className="text-xs">HF-FER-1025.jpg</code>.
+            </p>
+          </div>
+          <label className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground cursor-pointer hover:bg-primary/90">
+            {isBulkImageUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+            {isBulkImageUploading ? 'Uploading...' : 'Choose images'}
+            <input type="file" accept="image/*" multiple className="hidden" onChange={uploadBulkProductImages} disabled={isBulkImageUploading} />
+          </label>
+        </div>
+        <p className="text-xs text-muted-foreground mt-3">JPG, PNG, WEBP or other browser image formats; maximum 5MB per image. Matching images automatically become the product primary image.</p>
+        {bulkImageSummary && (
+          <div className="mt-3 text-sm">
+            <p className="text-green-700">Uploaded: {bulkImageSummary.uploaded}</p>
+            {bulkImageSummary.skipped.length > 0 && <p className="text-amber-700">Skipped: {bulkImageSummary.skipped.join(', ')}</p>}
+          </div>
+        )}
+      </div>
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-3xl font-display font-bold">Products</h1>
