@@ -579,7 +579,7 @@ async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse) 
     const stat = await fs.stat(target);
     if (!stat.isFile()) throw new Error('not file');
     const content = await fs.readFile(target);
-    const type = target.endsWith('.html') ? 'text/html; charset=utf-8' : target.endsWith('.json') ? 'application/json; charset=utf-8' : undefined;
+    const type = target.endsWith('.html') ? 'text/html; charset=utf-8' : target.endsWith('.json') ? 'application/json; charset=utf-8' : target.endsWith('.webmanifest') ? 'application/manifest+json; charset=utf-8' : target.endsWith('.svg') ? 'image/svg+xml' : target.endsWith('.ico') ? 'image/x-icon' : target.endsWith('.png') ? 'image/png' : undefined;
     res.writeHead(200, { 'Content-Type': type || 'application/octet-stream', 'Cache-Control': target.endsWith('.html') || target.endsWith('manus-routes.json') ? 'no-cache' : 'public, max-age=31536000, immutable' });
     res.end(content);
   } catch {
