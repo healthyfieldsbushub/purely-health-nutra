@@ -14,6 +14,7 @@ const distDir = path.join(root, 'dist');
 const storageDir = path.join(root, '.runtime-storage');
 const cookieName = 'webdev_app_session';
 const sessionTtlSeconds = 60 * 60 * 24 * 30;
+const providerRequestTimeoutMs = 3000;
 const pool = process.env.DATABASE_URL ? mysql.createPool({ uri: process.env.DATABASE_URL, connectionLimit: 5 }) : null;
 let schemaReady: Promise<void> | null = null;
 
@@ -381,7 +382,7 @@ class ProviderError extends Error {
 async function providerJson(url: string, options: RequestInit, label: string) {
   let response: Response;
   try {
-    response = await fetch(url, { ...options, signal: AbortSignal.timeout(20000) });
+    response = await fetch(url, { ...options, signal: AbortSignal.timeout(providerRequestTimeoutMs) });
   } catch (error: any) {
     throw new ProviderError(label, `${label} connection failed: ${error?.message || 'upstream request failed'}`, 503);
   }
