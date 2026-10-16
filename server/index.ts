@@ -408,6 +408,77 @@ function providerDiagnostic(error: any) {
     ? { provider: error.provider, error: error.message, upstreamStatus: error.upstreamStatus }
     : { provider: 'shipping-provider', error: error?.message || 'Shipping provider request failed' };
 }
+const metaToken = () => String(process.env.FACEBOOK_PAGE_ACCSESS_TOKEN || process.env.FACEBOOK_PAGE_ACCESS_TOKEN || process.env.FACEBOOK_GRAPH_TOKEN || '').replace(/\s+/g, '').trim();
+const safeMetaError = (value: unknown) => String(value || 'upstream request failed').replace(/\s+/g, ' ').replace(/Bearer\s+[^ ]+/gi, 'Bearer [redacted]').replace(/EAA[A-Za-z0-9_-]{12,}/g, '[redacted]').slice(0, 500);
+const metaGraphVersion = () => String(process.env.META_GRAPH_VERSION || 'v26.0').trim();
+async function metaGraphGet(pathname: string, params: Record<string, string>, label: string) {
+  const token = metaToken();
+  if (!token) throw new Error('Meta social credentials are not configured in Manus secrets');
+  const url = new URL(`https://graph.facebook.com/${metaGraphVersion()}/${pathname.replace(/^\//, '')}`);
+  Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
+  let response: Response;
+  try {
+    response = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'User-Agent': 'PurelyHealthNutra/1.0' }, signal: AbortSignal.timeout(providerRequestTimeoutMs) });
+  } catch (error: any) {
+    throw new ProviderError(label, `${label} connection failed: ${safeMetaError(error?.message)}`, 503);
+  }
+  const raw = await response.text();
+  let result: any = {};
+  try { result = raw ? JSON.parse(raw) : {}; } catch { /* Keep non-JSON provider errors safe. */ }
+  if (!response.ok) {
+    const detail = safeMetaError(result.error?.message || result.message || raw || `${label} request failed`);
+    const httpStatus = response.status === 401 || response.status === 403 ? 424 : response.status >= 500 ? 503 : 422;
+    throw new ProviderError(label, `${label} rejected the request: ${detail}`, httpStatus, response.status);
+  }
+  return result;
+}
+function mediaFromFacebookPost(post: any) {
+  const attachment = post.attachments?.data?.[0];
+  const media = attachment?.media?.image?.src || attachment?.media?.source || post.full_picture;
+  return {
+    id: String(post.id),
+    platform: 'facebook',
+    accountName: process.env.FACEBOOK_PAGE_NAME || 'Facebook Page',
+    text: String(post.message || post.story || '').trim(),
+    mediaUrl: media ? String(media) : undefined,
+    permalink: post.permalink_url ? String(post.permalink_url) : `https://www.facebook.com/${post.id}`,
+    publishedAt: post.created_time || null,
+    type: attachment?.type || 'post',
+  };
+}
+function mediaFromInstagramPost(post: any) {
+  return {
+    id: String(post.id),
+    platform: 'instagram',
+    accountName: process.env.INSTAGRAM_USERNAME || '@instagram',
+    text: String(post.caption || '').trim(),
+    mediaUrl: post.media_url || post.thumbnail_url || undefined,
+    permalink: post.permalink ? String(post.permalink) : `https://www.instagram.com/p/${post.id}/`,
+    publishedAt: post.timestamp || null,
+    type: post.media_type || 'MEDIA',
+  };
+}
+async function socialFeed(body: any) {
+  const platform = body.platform === 'instagram' ? 'instagram' : 'facebook';
+  const limit = String(Math.min(25, Math.max(1, Number(body.limit) || 12)));
+  if (platform === 'facebook') {
+    const pageId = String(process.env.FACEBOOK_PAGE_ID || '').trim();
+    if (!pageId) throw new Error('FACEBOOK_PAGE_ID is not configured in Manus secrets');
+    const result = await metaGraphGet(`${pageId}/feed`, {
+      fields: 'id,message,story,created_time,permalink_url,full_picture,is_published,attachments{media,type,url,subattachments}',
+      limit,
+    }, 'Facebook Page feed');
+    return { platform, accountName: process.env.FACEBOOK_PAGE_NAME || 'Facebook Page', items: (result.data || []).filter((post: any) => post.is_published !== false).map(mediaFromFacebookPost), hasMore: Boolean(result.paging?.next) };
+  }
+  const instagramIdValue = String(process.env.INSTAGRAM_ID || '').trim();
+  const instagramId = instagramIdValue.match(/\d{5,}/)?.[0] || '';
+  if (!instagramId) throw new Error('INSTAGRAM_ID is not configured in Manus secrets');
+  const result = await metaGraphGet(`${instagramId}/media`, {
+    fields: 'id,caption,media_type,media_url,permalink,timestamp,thumbnail_url,username,children{media_type,media_url,permalink,thumbnail_url}',
+    limit,
+  }, 'Instagram media feed');
+  return { platform, accountName: result.data?.[0]?.username ? `@${result.data[0].username}` : '@instagram', items: (result.data || []).map(mediaFromInstagramPost), hasMore: Boolean(result.paging?.next) };
+}
 async function courierGuyRates(body: any) {
   const apiKey = courierGuyApiKey();
   if (!apiKey) throw new Error('Courier Guy is not configured in Manus secrets');
@@ -513,6 +584,7 @@ async function functionRequest(req: http.IncomingMessage, res: http.ServerRespon
     if (name === 'paypal-payment') return json(res, 200, { data: await initiatePayPal(body) });
     if (name === 'shipping-rates') return json(res, 200, await shippingRates(body));
     if (name === 'pudo-lockers') return json(res, 200, { lockers: await pudoLockers(body) });
+    if (name === 'social-feed') return json(res, 200, { data: await socialFeed(body) });
     if (name === 'create-shipment') {
       const shipment = body.provider === 'pudo' ? await createPudoShipment(body) : await createCourierShipment(body);
       return json(res, 200, { success: true, shipment });
@@ -529,7 +601,9 @@ async function functionRequest(req: http.IncomingMessage, res: http.ServerRespon
   } catch (error: any) {
     if (error instanceof ProviderError && name === 'shipping-rates') return json(res, 200, { rates: [], errors: [providerDiagnostic(error)] });
     if (error instanceof ProviderError && name === 'pudo-lockers') return json(res, 200, { lockers: [], error: error.message, provider: error.provider, upstreamStatus: error.upstreamStatus });
+    if (error instanceof ProviderError && name === 'social-feed') return json(res, 200, { data: { platform: body.platform, accountName: body.platform === 'instagram' ? '@instagram' : process.env.FACEBOOK_PAGE_NAME || 'Facebook Page', items: [], hasMore: false, error: providerDiagnostic(error) } });
     if (error instanceof ProviderError) return json(res, error.httpStatus, { error: error.message, provider: error.provider, upstreamStatus: error.upstreamStatus });
+    if (name === 'social-feed') return json(res, 200, { data: { platform: body.platform, accountName: body.platform === 'instagram' ? '@instagram' : process.env.FACEBOOK_PAGE_NAME || 'Facebook Page', items: [], hasMore: false, error: { provider: 'Meta', error: error?.message || 'Social feed request failed' } } });
     return json(res, 502, { error: error?.message || 'Server function failed' });
   }
 }

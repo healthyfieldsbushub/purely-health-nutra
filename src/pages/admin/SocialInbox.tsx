@@ -59,6 +59,17 @@ interface Contact {
   unreadCount?: number;
 }
 
+interface SocialFeedItem {
+  id: string;
+  platform: "facebook" | "instagram";
+  accountName: string;
+  text: string;
+  mediaUrl?: string;
+  permalink: string;
+  publishedAt: string | null;
+  type: string;
+}
+
 const PLATFORMS = [
   { id: "whatsapp", name: "WhatsApp", icon: MessageCircle, color: "text-green-500" },
   { id: "facebook", name: "Facebook", icon: Facebook, color: "text-blue-500" },
@@ -95,7 +106,20 @@ export default function SocialInbox() {
     },
   });
 
-  // Fetch WhatsApp messages for selected contact
+  const { data: socialFeedResult, isLoading: loadingSocialFeed, error: socialFeedError } = useQuery({
+    queryKey: ["social-feed", selectedPlatform],
+    queryFn: async () => {
+      const response = await manus.functions.invoke<{ items: SocialFeedItem[]; accountName: string; error?: { error?: string } }>("social-feed", {
+        body: { platform: selectedPlatform, limit: 12 },
+      });
+      if (response.error) throw response.error;
+      return response.data;
+    },
+    enabled: selectedPlatform === "facebook" || selectedPlatform === "instagram",
+  });
+  const socialFeed = socialFeedResult?.items || [];
+
+  // Fetch WhatsApp messages or the selected Facebook/Instagram post
   const { data: messages = [], isLoading: loadingMessages } = useQuery({
     queryKey: ["social-messages", selectedPlatform, selectedContact?.platformId],
     queryFn: async () => {
@@ -121,13 +145,33 @@ export default function SocialInbox() {
         }));
       }
 
-      return [];
+      const feedItem = socialFeed.find((item) => item.id === selectedContact.platformId);
+      if (!feedItem) return [];
+      return [{
+        id: feedItem.id,
+        platform: feedItem.platform,
+        fromId: feedItem.accountName,
+        fromName: feedItem.accountName,
+        content: feedItem.text || `[${feedItem.type}]`,
+        direction: "inbound" as const,
+        status: "published",
+        timestamp: feedItem.publishedAt || "",
+      }];
     },
-    enabled: !!selectedContact,
+    enabled: !!selectedContact && (selectedPlatform === "whatsapp" || socialFeed.length > 0),
   });
 
   // Get contacts based on selected platform
-  const contacts = selectedPlatform === "whatsapp" ? whatsappContacts : [];
+  const contacts = selectedPlatform === "whatsapp"
+    ? whatsappContacts
+    : socialFeed.map((item) => ({
+        id: item.id,
+        platform: item.platform,
+        platformId: item.id,
+        name: item.accountName,
+        lastMessage: item.text || `[${item.type}]`,
+        lastMessageTime: item.publishedAt || undefined,
+      }));
   const filteredContacts = contacts.filter(
     (c) => c.name.toLowerCase().includes(searchQuery.toLowerCase()) || c.platformId.includes(searchQuery)
   );
@@ -259,6 +303,7 @@ export default function SocialInbox() {
             onClick={() => {
               queryClient.invalidateQueries({ queryKey: ["whatsapp-contacts"] });
               queryClient.invalidateQueries({ queryKey: ["social-messages"] });
+              queryClient.invalidateQueries({ queryKey: ["social-feed"] });
             }}
           >
             <RefreshCw className="h-4 w-4 mr-2" />
@@ -301,15 +346,15 @@ export default function SocialInbox() {
                 </CardHeader>
                 <CardContent className="p-0">
                   <ScrollArea className="h-[calc(100vh-430px)]">
-                    {loadingWhatsApp && platform.id === "whatsapp" ? (
+                    {(loadingWhatsApp && platform.id === "whatsapp") || (loadingSocialFeed && platform.id !== "whatsapp") ? (
                       <div className="flex items-center justify-center py-8">
                         <Loader2 className="h-6 w-6 animate-spin text-primary" />
                       </div>
                     ) : filteredContacts.length === 0 ? (
                       <div className="text-center py-8 text-muted-foreground">
-                        <MessageCircle className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                        <p>No conversations yet</p>
-                        <p className="text-xs mt-1">Messages will appear when customers contact you</p>
+                        {socialFeedError && platform.id !== "whatsapp" ? <AlertCircle className="h-12 w-12 mx-auto mb-2 opacity-50" /> : <MessageCircle className="h-12 w-12 mx-auto mb-2 opacity-50" />}
+                        <p>{socialFeedError && platform.id !== "whatsapp" ? "Unable to load social feed" : "No conversations yet"}</p>
+                        <p className="text-xs mt-1">{socialFeedError && platform.id !== "whatsapp" ? socialFeedError.message : platform.id === "whatsapp" ? "Messages will appear when customers contact you" : "Published posts will appear here"}</p>
                       </div>
                     ) : (
                       <div className="space-y-1 p-2">
@@ -363,9 +408,9 @@ export default function SocialInbox() {
                             </p>
                           </div>
                         </div>
-                        <Button variant="outline" size="sm" onClick={sendCatalogue} disabled={sendingReply}>
+                        <Button variant="outline" size="sm" onClick={sendCatalogue} disabled={sendingReply || selectedPlatform !== "whatsapp"}>
                           <FileText className="h-4 w-4 mr-2" />
-                          Send Catalogue
+                          {selectedPlatform === "whatsapp" ? "Send Catalogue" : "Feed is read-only"}
                         </Button>
                       </div>
                     </CardHeader>
@@ -457,9 +502,10 @@ export default function SocialInbox() {
                     <div className="p-4 border-t">
                       <div className="flex gap-2">
                         <Textarea
-                          placeholder="Type a message..."
+                          placeholder={selectedPlatform === "whatsapp" ? "Type a message..." : "Facebook and Instagram feed browsing is read-only"}
                           value={replyMessage}
                           onChange={(e) => setReplyMessage(e.target.value)}
+                          disabled={selectedPlatform !== "whatsapp"}
                           className="min-h-[44px] max-h-32 resize-none"
                           onKeyDown={(e) => {
                             if (e.key === "Enter" && !e.shiftKey) {
@@ -470,7 +516,7 @@ export default function SocialInbox() {
                         />
                         <Button
                           onClick={handleSendReply}
-                          disabled={!replyMessage.trim() || sendingReply}
+                          disabled={selectedPlatform !== "whatsapp" || !replyMessage.trim() || sendingReply}
                           className={
                             selectedPlatform === "whatsapp"
                               ? "bg-green-500 hover:bg-green-600"
