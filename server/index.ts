@@ -402,6 +402,11 @@ function normaliseRate(item: any, provider: string, fallbackService: string) {
   const deliveryDate = item.estimated_delivery_to || item.delivery_date_to || serviceLevel.delivery_date_to;
   return { provider, service: String(service), price: Number.isFinite(price) ? price : 0, estimatedDays: deliveryDate ? `By ${deliveryDate}` : 'Live quote', description: item.service_level_name || serviceLevel.name || item.name || 'Live API shipping quote' };
 }
+function providerDiagnostic(error: any) {
+  return error instanceof ProviderError
+    ? { provider: error.provider, error: error.message, upstreamStatus: error.upstreamStatus }
+    : { provider: 'shipping-provider', error: error?.message || 'Shipping provider request failed' };
+}
 async function courierGuyRates(body: any) {
   const apiKey = courierGuyApiKey();
   if (!apiKey) throw new Error('Courier Guy is not configured in Manus secrets');
@@ -456,9 +461,10 @@ async function pudoRates(body: any, lockerId: string) {
 }
 async function shippingRates(body: any) {
   const rates: any[] = [];
+  const errors: any[] = [];
   const provider = body.provider || 'all';
   if (provider !== 'pudo') {
-    try { rates.push(...await courierGuyRates(body)); } catch (error) { if (provider === 'courier-guy') throw error; }
+    try { rates.push(...await courierGuyRates(body)); } catch (error) { if (provider === 'courier-guy') throw error; errors.push(providerDiagnostic(error)); }
   }
   if (provider !== 'courier-guy') {
     try {
@@ -468,9 +474,9 @@ async function shippingRates(body: any) {
         lockerId = String(lockers[0]?.id || '');
       }
       if (lockerId) rates.push(...await pudoRates(body, lockerId));
-    } catch (error) { if (provider === 'pudo') throw error; }
+    } catch (error) { if (provider === 'pudo') throw error; errors.push(providerDiagnostic(error)); }
   }
-  return rates;
+  return { rates, errors };
 }
 async function createCourierShipment(body: any) {
   const apiKey = courierGuyApiKey();
@@ -504,7 +510,7 @@ async function functionRequest(req: http.IncomingMessage, res: http.ServerRespon
     if (name === 'payfast-payment') return json(res, 200, { data: await initiatePayFast({ ...body, origin: `${body.origin || ''}` }) });
     if (name === 'yoco-payment') return json(res, 200, { data: await initiateYoco(body) });
     if (name === 'paypal-payment') return json(res, 200, { data: await initiatePayPal(body) });
-    if (name === 'shipping-rates') return json(res, 200, { rates: await shippingRates(body) });
+    if (name === 'shipping-rates') return json(res, 200, await shippingRates(body));
     if (name === 'pudo-lockers') return json(res, 200, { lockers: await pudoLockers(body) });
     if (name === 'create-shipment') {
       const shipment = body.provider === 'pudo' ? await createPudoShipment(body) : await createCourierShipment(body);
@@ -520,6 +526,8 @@ async function functionRequest(req: http.IncomingMessage, res: http.ServerRespon
     }
     return json(res, 200, { data: { ok: true, migrated: true, function: name } });
   } catch (error: any) {
+    if (error instanceof ProviderError && name === 'shipping-rates') return json(res, 200, { rates: [], errors: [providerDiagnostic(error)] });
+    if (error instanceof ProviderError && name === 'pudo-lockers') return json(res, 200, { lockers: [], error: error.message, provider: error.provider, upstreamStatus: error.upstreamStatus });
     if (error instanceof ProviderError) return json(res, error.httpStatus, { error: error.message, provider: error.provider, upstreamStatus: error.upstreamStatus });
     return json(res, 502, { error: error?.message || 'Server function failed' });
   }
