@@ -198,6 +198,24 @@ function publicUser(row: AppRecord): UserLike {
 type UserLike = { id: string; email?: string; user_metadata?: Record<string, unknown> };
 
 async function findUserById(id: string) { return (await allRecords('auth_users')).find(row => row.id === id); }
+async function bootstrapAdminUser() {
+  const password = process.env.ADMIN_BOOTSTRAP_PASSWORD;
+  if (!pool || !password) return;
+
+  const email = String(process.env.ADMIN_EMAIL || 'admin@proagrisa.co.za').trim().toLowerCase();
+  const users = await allRecords('auth_users');
+  let user = users.find(row => row.email === email);
+  if (!user) {
+    user = { id: newId(), email, password_hash: hashPassword(password), full_name: 'Purely Health Nutra Admin', created_at: now() };
+    await saveRecord('auth_users', user);
+  }
+
+  const roles = await allRecords('user_roles');
+  if (!roles.some(row => row.user_id === user?.id && row.role === 'admin')) {
+    await saveRecord('user_roles', { id: newId(), user_id: user.id, role: 'admin', created_at: now() });
+  }
+}
+
 async function currentUser(req: http.IncomingMessage) {
   const token = parseCookies(req)[cookieName];
   if (!token) return null;
@@ -522,6 +540,7 @@ async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse) 
 
 async function createApp() {
   await fs.mkdir(storageDir, { recursive: true });
+  await bootstrapAdminUser();
   const production = process.env.NODE_ENV === 'production' || fsSync.existsSync(path.join(distDir, 'index.html'));
   let vite: ViteDevServer | null = null;
   if (!production) vite = await createViteServer({ root, server: { middlewareMode: true }, appType: 'spa' });
