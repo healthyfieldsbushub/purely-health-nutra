@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Purely Health Nutra</title>
+  <desc id="desc">A deep green rounded square with a warm sun, leaf and PHN monogram.</desc>
+  <rect width="512" height="512" rx="112" fill="#0B3D2E"/>
+  <circle cx="382" cy="132" r="54" fill="#F4B942"/>
+  <path d="M116 321c20-78 84-136 174-151 7 71-19 136-72 176-34 25-69 31-102 27Z" fill="#8FCB9B"/>
+  <path d="M129 354c52-51 108-94 171-129" fill="none" stroke="#FFF7EC" stroke-linecap="round" stroke-width="14"/>
+  <circle cx="256" cy="376" r="86" fill="#FFF7EC"/>
+  <text x="256" y="405" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="82" font-weight="800" letter-spacing="-6" fill="#0B3D2E">PHN</text>
+</svg>
