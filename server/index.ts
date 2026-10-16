@@ -316,8 +316,13 @@ async function initiatePayPal(body: any) {
 }
 
 function configured(keys: string[]) { return keys.every(key => Boolean(process.env[key])); }
-function courierGuyApiKey() { return process.env.COURIER_GUY_API_KEY || process.env.THE_COURIER_GUY_API || ''; }
-function pudoApiKey() { return process.env.PUDO_API_KEY || process.env.PUDO_SHIPPING_API || ''; }
+function courierGuyApiKey() { return String(process.env.COURIER_GUY_API_KEY || process.env.THE_COURIER_GUY_API || '').trim(); }
+function pudoApiKey() { return String(process.env.PUDO_API_KEY || process.env.PUDO_SHIPPING_API || '').trim(); }
+function pudoBaseUrl() {
+  const configured = String(process.env.PUDO_BASE_URL || '').replace(/\/+$/, '');
+  if (!configured || configured === 'https://api-tcg.co.za' || configured === 'https://api-pudo.co.za') return 'https://api.shiplogic.com';
+  return configured;
+}
 function configuredJson(name: string) {
   const value = process.env[name];
   if (!value) return null;
@@ -353,25 +358,49 @@ function collectionContact(body: any) {
 }
 function parcelFromBody(body: any) {
   const dimensions = body.dimensions || {};
+  const numberOr = (value: unknown, fallback: number, minimum: number) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.max(minimum, parsed) : fallback;
+  };
   return {
-    submitted_length_cm: String(Math.max(1, Number(dimensions.length || 30))),
-    submitted_width_cm: String(Math.max(1, Number(dimensions.width || 20))),
-    submitted_height_cm: String(Math.max(1, Number(dimensions.height || 15))),
-    submitted_weight_kg: String(Math.max(0.1, Number(body.weight || 0.5))),
+    submitted_length_cm: numberOr(dimensions.length, 30, 1),
+    submitted_width_cm: numberOr(dimensions.width, 20, 1),
+    submitted_height_cm: numberOr(dimensions.height, 15, 1),
+    submitted_weight_kg: numberOr(body.weight, 0.5, 0.1),
     parcel_description: 'Purely Health Nutra order',
     alternative_tracking_reference: String(body.orderId || ''),
+    packaging: String(body.packaging || 'Standard flyer'),
   };
 }
+class ProviderError extends Error {
+  constructor(public provider: string, message: string, public httpStatus = 503, public upstreamStatus?: number) {
+    super(message);
+    this.name = 'ProviderError';
+  }
+}
 async function providerJson(url: string, options: RequestInit, label: string) {
-  const response = await fetch(url, options);
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.message || result.error || `${label} request failed (${response.status})`);
+  let response: Response;
+  try {
+    response = await fetch(url, { ...options, signal: AbortSignal.timeout(20000) });
+  } catch (error: any) {
+    throw new ProviderError(label, `${label} connection failed: ${error?.message || 'upstream request failed'}`, 503);
+  }
+  const raw = await response.text();
+  let result: any = {};
+  try { result = raw ? JSON.parse(raw) : {}; } catch { /* Some provider errors are plain text. */ }
+  if (!response.ok) {
+    const detail = String(result.message || result.error || result.errors || raw || `${label} request failed`).replace(/Bearer\s+\S+/gi, 'Bearer [redacted]').slice(0, 500);
+    const httpStatus = response.status === 401 || response.status === 403 ? 424 : response.status >= 500 ? 503 : 422;
+    throw new ProviderError(label, `${label} rejected the request: ${detail}`, httpStatus, response.status);
+  }
   return result;
 }
 function normaliseRate(item: any, provider: string, fallbackService: string) {
-  const service = item.service_level_code || item.service_level_name || item.service || item.code || fallbackService;
-  const price = Number(item.rate ?? item.total ?? item.price ?? item.amount ?? item.charge ?? item.base_rate_obj?.charge ?? 0);
-  return { provider, service: String(service), price: Number.isFinite(price) ? price : 0, estimatedDays: item.estimated_delivery_to ? `By ${item.estimated_delivery_to}` : (item.delivery_date_to ? `By ${item.delivery_date_to}` : 'Live quote'), description: item.service_level_name || item.name || 'Live API shipping quote' };
+  const serviceLevel = item.service_level || item.service_level_obj || {};
+  const service = item.service_level_code || serviceLevel.code || item.service_level_name || serviceLevel.name || item.service || item.code || fallbackService;
+  const price = Number(item.rate ?? item.total ?? item.price ?? item.amount ?? item.charge ?? item.base_rate?.charge ?? item.base_rate_obj?.charge ?? 0);
+  const deliveryDate = item.estimated_delivery_to || item.delivery_date_to || serviceLevel.delivery_date_to;
+  return { provider, service: String(service), price: Number.isFinite(price) ? price : 0, estimatedDays: deliveryDate ? `By ${deliveryDate}` : 'Live quote', description: item.service_level_name || serviceLevel.name || item.name || 'Live API shipping quote' };
 }
 async function courierGuyRates(body: any) {
   const apiKey = courierGuyApiKey();
@@ -380,7 +409,7 @@ async function courierGuyRates(body: any) {
     collection_address: collectionAddress('courier', body),
     delivery_address: checkoutAddress(body.destinationAddress, body.destinationPostalCode),
     parcels: [parcelFromBody(body)],
-    ...(process.env.COURIER_GUY_ACCOUNT_CODE ? { account_code: process.env.COURIER_GUY_ACCOUNT_CODE } : {}),
+    ...(process.env.COURIER_GUY_ACCOUNT_CODE ? { provider_id: process.env.COURIER_GUY_ACCOUNT_CODE } : {}),
   };
   const result = await providerJson(`${process.env.COURIER_GUY_BASE_URL || 'https://api.shiplogic.com'}/rates`, {
     method: 'POST',
@@ -393,9 +422,8 @@ async function courierGuyRates(body: any) {
 async function pudoLockers(body: any) {
   const apiKey = pudoApiKey();
   if (!apiKey) throw new Error('PUDO is not configured in Manus secrets');
-  const base = process.env.PUDO_BASE_URL || 'https://api-tcg.co.za';
-  const result = await providerJson(`${base}/lockers-data`, {
-    headers: { Authorization: `Bearer ${apiKey}`, 'X-API-Key': apiKey, Accept: 'application/json' },
+  const result = await providerJson(`${pudoBaseUrl()}/pickup-points?type=locker`, {
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
   }, 'PUDO lockers');
   const entries = Array.isArray(result) ? result : (result.lockers || result.data || []);
   const destinationCode = String(body.destinationPostalCode || '');
@@ -413,16 +441,14 @@ async function pudoRates(body: any, lockerId: string) {
   const apiKey = pudoApiKey();
   if (!apiKey) throw new Error('PUDO is not configured in Manus secrets');
   const payload = {
-    collection_address: process.env.PUDO_COLLECTION_TERMINAL_ID
-      ? { terminal_id: process.env.PUDO_COLLECTION_TERMINAL_ID }
-      : collectionAddress('pudo', body),
-    delivery_address: { terminal_id: lockerId },
-    opt_in_rates: [],
-    opt_in_time_based_rates: [],
+    collection_address: collectionAddress('pudo', body),
+    delivery_pickup_point_id: lockerId,
+    delivery_pickup_point_provider: 'tcg-locker',
+    parcels: [parcelFromBody(body)],
   };
-  const result = await providerJson(`${process.env.PUDO_BASE_URL || 'https://api-tcg.co.za'}/rates`, {
+  const result = await providerJson(`${pudoBaseUrl()}/rates`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   }, 'PUDO rates');
   const entries = Array.isArray(result) ? result : (result.rates || result.data || [result]);
@@ -436,8 +462,11 @@ async function shippingRates(body: any) {
   }
   if (provider !== 'courier-guy') {
     try {
-      const lockers = await pudoLockers(body);
-      const lockerId = String(body.pudoLockerId || lockers[0]?.id || '');
+      let lockerId = String(body.pudoLockerId || process.env.PUDO_COLLECTION_TERMINAL_ID || '');
+      if (!lockerId) {
+        const lockers = await pudoLockers(body);
+        lockerId = String(lockers[0]?.id || '');
+      }
       if (lockerId) rates.push(...await pudoRates(body, lockerId));
     } catch (error) { if (provider === 'pudo') throw error; }
   }
@@ -446,24 +475,22 @@ async function shippingRates(body: any) {
 async function createCourierShipment(body: any) {
   const apiKey = courierGuyApiKey();
   if (!apiKey) throw new Error('Courier Guy is not configured in Manus secrets');
-  const payload = { collection_address: collectionAddress('courier', body), collection_contact: collectionContact(body), delivery_address: checkoutAddress(body.destinationAddress, body.destinationPostalCode), delivery_contact: body.deliveryContact, parcels: [parcelFromBody(body)], service_level_code: body.serviceLevelCode, ...(process.env.COURIER_GUY_ACCOUNT_CODE ? { account_code: process.env.COURIER_GUY_ACCOUNT_CODE } : {}) };
+  const payload = { collection_address: collectionAddress('courier', body), collection_contact: collectionContact(body), delivery_address: checkoutAddress(body.destinationAddress, body.destinationPostalCode), delivery_contact: body.deliveryContact, parcels: [parcelFromBody(body)], service_level_code: body.serviceLevelCode, ...(process.env.COURIER_GUY_ACCOUNT_CODE ? { provider_id: process.env.COURIER_GUY_ACCOUNT_CODE } : {}) };
   return providerJson(`${process.env.COURIER_GUY_BASE_URL || 'https://api.shiplogic.com'}/shipments`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, 'Courier Guy shipment');
 }
 async function createPudoShipment(body: any) {
   const apiKey = pudoApiKey();
   if (!apiKey) throw new Error('PUDO is not configured in Manus secrets');
   const payload = {
-    collection_address: process.env.PUDO_COLLECTION_TERMINAL_ID
-      ? { terminal_id: process.env.PUDO_COLLECTION_TERMINAL_ID }
-      : collectionAddress('pudo', body),
+    collection_address: collectionAddress('pudo', body),
     collection_contact: collectionContact(body),
-    delivery_address: { terminal_id: body.pudoLockerId },
+    delivery_pickup_point_id: body.pudoLockerId,
+    delivery_pickup_point_provider: 'tcg-locker',
     delivery_contact: body.deliveryContact,
     service_level_code: body.serviceLevelCode,
-    opt_in_rates: [],
-    opt_in_time_based_rates: [],
+    parcels: [parcelFromBody(body)],
   };
-  return providerJson(`${process.env.PUDO_BASE_URL || 'https://api-tcg.co.za'}/shipments`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'X-API-Key': apiKey, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, 'PUDO shipment');
+  return providerJson(`${pudoBaseUrl()}/shipments`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, 'PUDO shipment');
 }
 
 async function functionRequest(req: http.IncomingMessage, res: http.ServerResponse, pathname: string) {
@@ -493,6 +520,7 @@ async function functionRequest(req: http.IncomingMessage, res: http.ServerRespon
     }
     return json(res, 200, { data: { ok: true, migrated: true, function: name } });
   } catch (error: any) {
+    if (error instanceof ProviderError) return json(res, error.httpStatus, { error: error.message, provider: error.provider, upstreamStatus: error.upstreamStatus });
     return json(res, 502, { error: error?.message || 'Server function failed' });
   }
 }
