@@ -348,6 +348,9 @@ function collectionAddress(provider: 'courier' | 'pudo', body: any) {
   if (!address) throw new Error(`${provider === 'courier' ? 'Courier Guy' : 'PUDO'} collection address is not configured in Manus secrets`);
   return checkoutAddress(address);
 }
+function collectionContact(body: any) {
+  return configuredJson('TCG_COLLECTION_CONTACT_JSON') || body.collectionContact || undefined;
+}
 function parcelFromBody(body: any) {
   const dimensions = body.dimensions || {};
   return {
@@ -410,10 +413,12 @@ async function pudoRates(body: any, lockerId: string) {
   const apiKey = pudoApiKey();
   if (!apiKey) throw new Error('PUDO is not configured in Manus secrets');
   const payload = {
-    collection_address: collectionAddress('pudo', body),
-    delivery_pickup_point_id: lockerId,
-    delivery_pickup_point_provider: 'tcg-locker',
-    parcels: [parcelFromBody(body)],
+    collection_address: process.env.PUDO_COLLECTION_TERMINAL_ID
+      ? { terminal_id: process.env.PUDO_COLLECTION_TERMINAL_ID }
+      : collectionAddress('pudo', body),
+    delivery_address: { terminal_id: lockerId },
+    opt_in_rates: [],
+    opt_in_time_based_rates: [],
   };
   const result = await providerJson(`${process.env.PUDO_BASE_URL || 'https://api-tcg.co.za'}/rates`, {
     method: 'POST',
@@ -441,13 +446,23 @@ async function shippingRates(body: any) {
 async function createCourierShipment(body: any) {
   const apiKey = courierGuyApiKey();
   if (!apiKey) throw new Error('Courier Guy is not configured in Manus secrets');
-  const payload = { collection_address: collectionAddress('courier', body), collection_contact: body.collectionContact, delivery_address: checkoutAddress(body.destinationAddress, body.destinationPostalCode), delivery_contact: body.deliveryContact, parcels: [parcelFromBody(body)], service_level_code: body.serviceLevelCode, ...(process.env.COURIER_GUY_ACCOUNT_CODE ? { account_code: process.env.COURIER_GUY_ACCOUNT_CODE } : {}) };
+  const payload = { collection_address: collectionAddress('courier', body), collection_contact: collectionContact(body), delivery_address: checkoutAddress(body.destinationAddress, body.destinationPostalCode), delivery_contact: body.deliveryContact, parcels: [parcelFromBody(body)], service_level_code: body.serviceLevelCode, ...(process.env.COURIER_GUY_ACCOUNT_CODE ? { account_code: process.env.COURIER_GUY_ACCOUNT_CODE } : {}) };
   return providerJson(`${process.env.COURIER_GUY_BASE_URL || 'https://api.shiplogic.com'}/shipments`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, 'Courier Guy shipment');
 }
 async function createPudoShipment(body: any) {
   const apiKey = pudoApiKey();
   if (!apiKey) throw new Error('PUDO is not configured in Manus secrets');
-  const payload = { collection_address: collectionAddress('pudo', body), collection_contact: body.collectionContact, delivery_pickup_point_id: body.pudoLockerId, delivery_pickup_point_provider: 'tcg-locker', delivery_contact: body.deliveryContact, parcels: [parcelFromBody(body)], service_level_code: body.serviceLevelCode };
+  const payload = {
+    collection_address: process.env.PUDO_COLLECTION_TERMINAL_ID
+      ? { terminal_id: process.env.PUDO_COLLECTION_TERMINAL_ID }
+      : collectionAddress('pudo', body),
+    collection_contact: collectionContact(body),
+    delivery_address: { terminal_id: body.pudoLockerId },
+    delivery_contact: body.deliveryContact,
+    service_level_code: body.serviceLevelCode,
+    opt_in_rates: [],
+    opt_in_time_based_rates: [],
+  };
   return providerJson(`${process.env.PUDO_BASE_URL || 'https://api-tcg.co.za'}/shipments`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'X-API-Key': apiKey, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, 'PUDO shipment');
 }
 
