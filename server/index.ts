@@ -411,6 +411,7 @@ function providerDiagnostic(error: any) {
 const metaToken = () => String(process.env.FACEBOOK_PAGE_ACCSESS_TOKEN || process.env.FACEBOOK_PAGE_ACCESS_TOKEN || process.env.FACEBOOK_GRAPH_TOKEN || '').replace(/\s+/g, '').trim();
 const safeMetaError = (value: unknown) => String(value || 'upstream request failed').replace(/\s+/g, ' ').replace(/Bearer\s+[^ ]+/gi, 'Bearer [redacted]').replace(/EAA[A-Za-z0-9_-]{12,}/g, '[redacted]').slice(0, 500);
 const metaGraphVersion = () => String(process.env.META_GRAPH_VERSION || 'v26.0').trim();
+const socialRequestTimeoutMs = 10000;
 async function metaGraphGet(pathname: string, params: Record<string, string>, label: string) {
   const token = metaToken();
   if (!token) throw new Error('Meta social credentials are not configured in Manus secrets');
@@ -418,7 +419,7 @@ async function metaGraphGet(pathname: string, params: Record<string, string>, la
   Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
   let response: Response;
   try {
-    response = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'User-Agent': 'PurelyHealthNutra/1.0' }, signal: AbortSignal.timeout(providerRequestTimeoutMs) });
+    response = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'User-Agent': 'PurelyHealthNutra/1.0' }, signal: AbortSignal.timeout(socialRequestTimeoutMs) });
   } catch (error: any) {
     throw new ProviderError(label, `${label} connection failed: ${safeMetaError(error?.message)}`, 503);
   }
@@ -603,7 +604,7 @@ async function functionRequest(req: http.IncomingMessage, res: http.ServerRespon
     if (error instanceof ProviderError && name === 'pudo-lockers') return json(res, 200, { lockers: [], error: error.message, provider: error.provider, upstreamStatus: error.upstreamStatus });
     if (error instanceof ProviderError && name === 'social-feed') return json(res, 200, { data: { platform: body.platform, accountName: body.platform === 'instagram' ? '@instagram' : process.env.FACEBOOK_PAGE_NAME || 'Facebook Page', items: [], hasMore: false, error: providerDiagnostic(error) } });
     if (error instanceof ProviderError) return json(res, error.httpStatus, { error: error.message, provider: error.provider, upstreamStatus: error.upstreamStatus });
-    if (name === 'social-feed') return json(res, 200, { data: { platform: body.platform, accountName: body.platform === 'instagram' ? '@instagram' : process.env.FACEBOOK_PAGE_NAME || 'Facebook Page', items: [], hasMore: false, error: { provider: 'Meta', error: error?.message || 'Social feed request failed' } } });
+    if (name === 'social-feed') return json(res, 200, { data: { platform: body.platform, accountName: String(body.platform).toLowerCase() === 'instagram' ? '@instagram' : process.env.FACEBOOK_PAGE_NAME || 'Facebook Page', items: [], hasMore: false, error: { provider: 'Meta', error: error?.message || 'Social feed request failed' } } });
     return json(res, 502, { error: error?.message || 'Server function failed' });
   }
 }
