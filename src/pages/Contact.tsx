@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { motion } from "motion/react";
 import { Header } from "@/components/layout/Header";
 import { CartSidebar } from "@/components/cart/CartSidebar";
@@ -15,12 +16,16 @@ import {
   MapPin,
   Send,
   Globe,
+  Copy,
+  Check,
 } from "lucide-react";
 
 const WHATSAPP_NUMBER = "+27834474639";
 const WHATSAPP_DISPLAY = "+27 83 447 4639";
 const EMAIL = "admin@proagrisa.co.za";
-const OFFICE = "Krugersdorp, West Rand, Gauteng, South Africa";
+const ORDERS_EMAIL = "orders@proagrisa.co.za";
+const INTERNATIONAL_NUMBER = "+1 351 777 2848";
+const OFFICE = "22 Wren Street, Rant and Dal, Gauteng, South Africa";
 const HOURS = "Monday – Saturday, 08:00 – 17:00 (SAST)";
 
 const contactMethods = [
@@ -50,7 +55,7 @@ const contactMethods = [
     description: "Our office and dispatch base in Gauteng, South Africa.",
     contact: OFFICE,
     secondaryContact: HOURS,
-    action: "https://maps.google.com/?q=Krugersdorp,+Gauteng,+South+Africa",
+    action: "https://maps.google.com/?q=22+Wren+Street,+Rant+and+Dal,+Gauteng,+South+Africa",
     actionLabel: "View on Map",
     gradient: "from-emerald-500 to-teal-500",
     external: true,
@@ -60,7 +65,7 @@ const contactMethods = [
 const websites = [
   {
     name: "Purely Health Nutra",
-    url: "https://purelyhealthnutra.com",
+    url: "https://purelyhealthnutra.company",
     description: "Live probiotic cultures, fermentation starters & superfoods.",
   },
   {
@@ -70,7 +75,30 @@ const websites = [
   },
 ];
 
+const websiteRouting = [
+  { name: "Wonderful Dragon Fruit / Dragon Fruit Africa", domain: "wonderfuldragonfruit.com", email: EMAIL, orders: ORDERS_EMAIL, whatsapp: WHATSAPP_DISPLAY },
+  { name: "Purely Health Nutra", domain: "purelyhealthnutra.company", email: EMAIL, orders: ORDERS_EMAIL, whatsapp: WHATSAPP_DISPLAY },
+  { name: "Living Culture Health", domain: "livingculturehealth.company", email: EMAIL, orders: ORDERS_EMAIL, whatsapp: WHATSAPP_DISPLAY },
+  { name: "Marketplace Hub", domain: "marketplacehub.company", email: EMAIL, orders: null, whatsapp: WHATSAPP_DISPLAY },
+  { name: "African Heritage Marketplace", domain: "africanheritagemarketplace.company", email: EMAIL, orders: null, whatsapp: WHATSAPP_DISPLAY },
+  { name: "Business OS Pro", domain: "businessospro.company", email: EMAIL, orders: null, whatsapp: WHATSAPP_DISPLAY },
+  { name: "Pocket School Pro", domain: "pocketschoolpro.company", email: EMAIL, orders: null, whatsapp: WHATSAPP_DISPLAY },
+  { name: "WildCamp", domain: "wildcamp.company", email: EMAIL, orders: null, whatsapp: WHATSAPP_DISPLAY },
+];
+
 const Contact = () => {
+  const [copiedValue, setCopiedValue] = useState<string | null>(null);
+
+  const copyContact = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedValue(value);
+      window.setTimeout(() => setCopiedValue(null), 1800);
+    } catch {
+      setCopiedValue(null);
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const formData = new FormData(e.target as HTMLFormElement);
@@ -93,7 +121,7 @@ const Contact = () => {
       "@context": "https://schema.org",
       "@type": "ContactPage",
       name: "Contact Purely Health Nutra",
-      url: "https://purelyhealthnutra.com/contact",
+      url: "https://purelyhealthnutra.company/contact",
     },
     {
       "@context": "https://schema.org",
@@ -101,10 +129,11 @@ const Contact = () => {
       name: "Purely Health Nutra",
       email: EMAIL,
       telephone: WHATSAPP_NUMBER,
-      url: "https://purelyhealthnutra.com",
+      url: "https://purelyhealthnutra.company",
       address: {
         "@type": "PostalAddress",
-        addressLocality: "Krugersdorp",
+        streetAddress: "22 Wren Street",
+        addressLocality: "Rant and Dal",
         addressRegion: "Gauteng",
         addressCountry: "ZA",
       },
@@ -129,9 +158,9 @@ const Contact = () => {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
-        title="Contact Purely Health Nutra | Krugersdorp, Gauteng"
-        description="Contact Purely Health Nutra in Krugersdorp, Gauteng. WhatsApp +27 83 447 4639, email admin@proagrisa.co.za. Mon–Sat 08:00–17:00. Nationwide delivery across South Africa."
-        canonical="https://purelyhealthnutra.com/contact"
+        title="Contact Purely Health Nutra | Healthy Fields Group"
+        description="Contact Purely Health Nutra and Healthy Fields Group. WhatsApp +27 83 447 4639, orders orders@proagrisa.co.za, office at 22 Wren Street, Rant and Dal, Gauteng."
+        canonical="https://purelyhealthnutra.company/contact"
         jsonLd={jsonLd}
       />
       <Header />
@@ -156,7 +185,7 @@ const Contact = () => {
               Contact <span className="text-gradient-tropical">Purely Health Nutra</span>
             </h1>
             <p className="text-lg text-muted-foreground">
-              Based in Krugersdorp, West Rand, Gauteng — shipping premium live
+              Part of Healthy Fields Group, serving customers with premium live
               cultures, dragon fruit and natural health products across South
               Africa. Reach us on WhatsApp, email, or fill in the form below.
             </p>
@@ -172,7 +201,7 @@ const Contact = () => {
               <MapPin className="h-5 w-5 text-primary shrink-0 mt-0.5" />
               <div>
                 <p className="font-semibold">Office</p>
-                <p className="text-muted-foreground">Krugersdorp, West Rand, Gauteng</p>
+                <p className="text-muted-foreground">22 Wren Street, Rant and Dal, Gauteng</p>
               </div>
             </div>
             <div className="flex items-start gap-3">
@@ -201,6 +230,50 @@ const Contact = () => {
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* Healthy Fields Group contact details */}
+      <section className="py-10">
+        <div className="container mx-auto px-4">
+          <div className="mb-6">
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-primary">Healthy Fields Group</p>
+            <h2 className="font-display text-3xl font-bold mt-2">Main group contact information</h2>
+            <p className="text-muted-foreground mt-2">General enquiries, website administration, orders and international contact routing.</p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              { icon: Mail, label: "General enquiries & website administration", value: EMAIL, href: `mailto:${EMAIL}`, copy: EMAIL },
+              { icon: Mail, label: "Orders and sales", value: ORDERS_EMAIL, href: `mailto:${ORDERS_EMAIL}`, copy: ORDERS_EMAIL },
+              { icon: MessageCircle, label: "WhatsApp — South Africa", value: WHATSAPP_DISPLAY, href: `https://wa.me/${WHATSAPP_NUMBER.replace("+", "")}`, copy: WHATSAPP_DISPLAY },
+              { icon: Globe, label: "International contact", value: INTERNATIONAL_NUMBER, href: `tel:${INTERNATIONAL_NUMBER.replace(/\s/g, "")}`, copy: INTERNATIONAL_NUMBER },
+            ].map(({ icon: Icon, label, value, href, copy }) => (
+              <Card key={label} className="glass-card">
+                <CardContent className="p-5">
+                  <Icon className="h-5 w-5 text-primary mb-3" />
+                  <p className="text-sm text-muted-foreground mb-1">{label}</p>
+                  <a href={href} className="font-semibold text-foreground hover:text-primary break-words">{value}</a>
+                  <Button type="button" variant="ghost" size="sm" className="mt-3 px-0 gap-2" onClick={() => copyContact(copy)}>
+                    {copiedValue === copy ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                    {copiedValue === copy ? "Copied" : "Copy"}
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+          <Card className="glass-card mt-4">
+            <CardContent className="p-5 flex flex-col sm:flex-row sm:items-center gap-3">
+              <MapPin className="h-5 w-5 text-primary shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm text-muted-foreground">Main office</p>
+                <a href="https://maps.google.com/?q=22+Wren+Street,+Rant+and+Dal,+Gauteng,+South+Africa" target="_blank" rel="noopener noreferrer" className="font-semibold hover:text-primary">{OFFICE}</a>
+              </div>
+              <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => copyContact(OFFICE)}>
+                {copiedValue === OFFICE ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                {copiedValue === OFFICE ? "Copied" : "Copy address"}
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </section>
 
@@ -357,6 +430,33 @@ const Contact = () => {
               </CardContent>
             </Card>
           </motion.div>
+        </div>
+      </section>
+
+      {/* Website contact routing */}
+      <section className="py-12 bg-muted/30">
+        <div className="container mx-auto px-4">
+          <div className="max-w-3xl mb-8">
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-primary">Website contact routing</p>
+            <h2 className="font-display text-3xl font-bold mt-2">The right contact for every group website</h2>
+            <p className="text-muted-foreground mt-2">Purely Health Nutra uses the group administration and orders contacts below. Dedicated addresses can be assigned as each website grows.</p>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            {websiteRouting.map((site) => (
+              <Card key={site.domain} className="bg-background/80 border-border/70">
+                <CardContent className="p-5">
+                  <Globe className="h-5 w-5 text-primary mb-3" />
+                  <h3 className="font-display font-bold leading-tight">{site.name}</h3>
+                  <p className="text-xs text-muted-foreground mt-1 mb-4">{site.domain}</p>
+                  <div className="space-y-2 text-sm">
+                    <a href={`mailto:${site.email}`} className="block hover:text-primary break-all">{site.email}</a>
+                    {site.orders && <a href={`mailto:${site.orders}`} className="block hover:text-primary break-all">Orders: {site.orders}</a>}
+                    <a href={`https://wa.me/${WHATSAPP_NUMBER.replace("+", "")}`} className="block hover:text-primary">WhatsApp: {site.whatsapp}</a>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         </div>
       </section>
 
