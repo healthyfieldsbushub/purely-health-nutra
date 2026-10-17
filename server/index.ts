@@ -535,6 +535,15 @@ async function pudoRates(body: any, lockerId: string) {
 async function shippingRates(body: any) {
   const rates: any[] = [];
   const errors: any[] = [];
+  if (String(process.env.MOCK_FLAT_RATE_ENABLED || '').trim().toLowerCase() === 'true') {
+    rates.push({
+      provider: 'mock',
+      service: 'Mock Flat Rate (test only)',
+      price: 100,
+      estimatedDays: 'Test only',
+      description: 'Temporary R100 flat-rate method enabled for non-charging checkout verification.',
+    });
+  }
   const provider = body.provider || 'all';
   if (provider !== 'pudo') {
     try { rates.push(...await courierGuyRates(body)); } catch (error) { if (provider === 'courier-guy') throw error; errors.push(providerDiagnostic(error)); }
