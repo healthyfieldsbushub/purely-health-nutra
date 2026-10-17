@@ -538,7 +538,7 @@ async function shippingRates(body: any) {
   const errors: any[] = [];
   const provider = body.provider || 'all';
   if (provider !== 'pudo') {
-    try { rates.push(...await courierGuyRates(body)); } catch (error) { if (provider === 'courier-guy') throw error; errors.push(providerDiagnostic(error)); }
+    try { rates.push(...await courierGuyRates(body)); } catch (error) { errors.push(providerDiagnostic(error)); }
   }
   if (provider !== 'courier-guy') {
     try {
@@ -548,7 +548,13 @@ async function shippingRates(body: any) {
         lockerId = String(lockers[0]?.id || '');
       }
       if (lockerId) rates.push(...await pudoRates(body, lockerId));
-    } catch (error) { if (provider === 'pudo') throw error; errors.push(providerDiagnostic(error)); }
+      else errors.push({ provider: 'PUDO rates', error: 'No PUDO locker was available for this destination.' });
+    } catch (error) { errors.push(providerDiagnostic(error)); }
+  }
+  if (!rates.length) {
+    const configuredFallback = Number(process.env.FALLBACK_SHIPPING_FLAT_RATE_ZAR || 99);
+    const fallbackPrice = Number.isFinite(configuredFallback) && configuredFallback >= 0 ? configuredFallback : 99;
+    rates.push({ provider: 'fallback', service: 'Standard delivery', price: fallbackPrice, estimatedDays: '2–5 business days', description: 'Flat-rate fallback; live carrier quote unavailable.' });
   }
   return { rates, errors };
 }
