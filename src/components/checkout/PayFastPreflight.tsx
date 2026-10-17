@@ -73,7 +73,8 @@ export function PayFastPreflight({
         }),
       });
 
-      const data = await response.json();
+      const payload = await response.json();
+      const data = payload.data || payload;
       setPreflightData(data);
       
       if (data.success) {

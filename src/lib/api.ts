@@ -173,6 +173,7 @@ export async function initiatePayFastPayment(
         customerName,
         returnUrl,
         cancelUrl,
+        origin: window.location.origin,
       }),
     });
 
@@ -181,7 +182,15 @@ export async function initiatePayFastPayment(
       throw new Error(error.error || "Payment initiation failed");
     }
 
-    return await response.json();
+    const payload = await response.json();
+    const result = payload.data || payload;
+    return {
+      success: Boolean(result.success),
+      actionUrl: result.actionUrl,
+      formFields: result.formFields,
+      paymentId: result.paymentId,
+      error: result.error,
+    };
   } catch (error: any) {
     console.error("PayFast payment error:", error);
     return { success: false, error: error.message };
@@ -218,7 +227,14 @@ export async function initiateYocoPayment(
       throw new Error(error.error || "Payment initiation failed");
     }
 
-    return await response.json();
+    const payload = await response.json();
+    const result = payload.data || payload;
+    return {
+      success: Boolean(result.success),
+      redirectUrl: result.redirectUrl,
+      checkoutId: result.checkoutId,
+      error: result.error,
+    };
   } catch (error: any) {
     console.error("Yoco payment error:", error);
     return { success: false, error: error.message };

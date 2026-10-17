@@ -258,12 +258,13 @@ async function authRequest(req: http.IncomingMessage, res: http.ServerResponse, 
 
 async function paymentConfig() {
   const configured = (keys: string[]) => keys.every(key => Boolean(process.env[key]));
+  const mode = (key: string, fallback: string) => String(process.env[key] || fallback).trim().toLowerCase();
   return {
-    payfast: { configured: configured(['PAYFAST_MERCHANT_ID', 'PAYFAST_MERCHANT_KEY']), mode: process.env.PAYFAST_MODE || 'sandbox', required: ['PAYFAST_MERCHANT_ID', 'PAYFAST_MERCHANT_KEY', 'PAYFAST_SECURITY_PASSPHRASE'] },
-    yoco: { configured: configured(['YOCO_API_KEY']), mode: process.env.YOCO_MODE || 'test', required: ['YOCO_API_KEY'] },
-    paypal: { configured: configured(['PAYPAL_CLIENT_ID', 'PAYPAL_SECRET_KEY_1']), mode: process.env.PAYPAL_MODE || 'sandbox', required: ['PAYPAL_CLIENT_ID', 'PAYPAL_SECRET_KEY_1'] },
-    courierGuy: { configured: Boolean(process.env.COURIER_GUY_API_KEY || process.env.THE_COURIER_GUY_API), mode: process.env.COURIER_GUY_MODE || 'live', required: ['THE_COURIER_GUY_API', 'COURIER_GUY_COLLECTION_ADDRESS_JSON'] },
-    pudo: { configured: Boolean(process.env.PUDO_API_KEY || process.env.PUDO_SHIPPING_API), mode: process.env.PUDO_MODE || 'live', required: ['PUDO_SHIPPING_API', 'PUDO_COLLECTION_ADDRESS_JSON'] },
+    payfast: { configured: configured(['PAYFAST_MERCHANT_ID', 'PAYFAST_MERCHANT_KEY', 'PAYFAST_SECURITY_PASSPHRASE']), mode: mode('PAYFAST_MODE', 'sandbox'), required: ['PAYFAST_MERCHANT_ID', 'PAYFAST_MERCHANT_KEY', 'PAYFAST_SECURITY_PASSPHRASE'] },
+    yoco: { configured: configured(['YOCO_API_KEY']), mode: mode('YOCO_MODE', 'test'), required: ['YOCO_API_KEY'] },
+    paypal: { configured: configured(['PAYPAL_CLIENT_ID', 'PAYPAL_SECRET_KEY_1']), mode: mode('PAYPAL_MODE', 'sandbox'), required: ['PAYPAL_CLIENT_ID', 'PAYPAL_SECRET_KEY_1'] },
+    courierGuy: { configured: Boolean(process.env.COURIER_GUY_API_KEY || process.env.THE_COURIER_GUY_API), mode: mode('COURIER_GUY_MODE', 'live'), required: ['THE_COURIER_GUY_API', 'COURIER_GUY_COLLECTION_ADDRESS_JSON'] },
+    pudo: { configured: Boolean(process.env.PUDO_API_KEY || process.env.PUDO_SHIPPING_API), mode: mode('PUDO_MODE', 'live'), required: ['PUDO_SHIPPING_API', 'PUDO_COLLECTION_ADDRESS_JSON'] },
   };
 }
 
@@ -273,13 +274,16 @@ function payfastSignature(fields: Record<string, string>, passphrase?: string) {
 }
 
 async function initiatePayFast(body: any) {
-  if (!process.env.PAYFAST_MERCHANT_ID || !process.env.PAYFAST_MERCHANT_KEY) throw new Error('PayFast is not configured in Manus secrets');
+  if (!process.env.PAYFAST_MERCHANT_ID || !process.env.PAYFAST_MERCHANT_KEY || !process.env.PAYFAST_SECURITY_PASSPHRASE) throw new Error('PayFast is not fully configured in Manus secrets');
+  const origin = String(body.origin || (() => {
+    try { return new URL(String(body.returnUrl || '')).origin; } catch { return ''; }
+  })());
   const fields: Record<string, string> = {
     merchant_id: process.env.PAYFAST_MERCHANT_ID,
     merchant_key: process.env.PAYFAST_MERCHANT_KEY,
     return_url: String(body.returnUrl || ''),
     cancel_url: String(body.cancelUrl || ''),
-    notify_url: `${body.origin || ''}/api/webhooks/payfast`,
+    notify_url: `${origin}/api/webhooks/payfast`,
     name_first: String(body.customerName || '').split(' ')[0] || 'Customer',
     email_address: String(body.customerEmail || ''),
     m_payment_id: String(body.orderId || ''),
@@ -287,7 +291,7 @@ async function initiatePayFast(body: any) {
     item_name: String(body.itemName || 'Purely Health Nutra order'),
   };
   fields.signature = payfastSignature(fields, process.env.PAYFAST_SECURITY_PASSPHRASE);
-  return { success: true, actionUrl: process.env.PAYFAST_MODE === 'live' ? 'https://www.payfast.co.za/eng/process' : 'https://sandbox.payfast.co.za/eng/process', formFields: fields };
+  return { success: true, actionUrl: String(process.env.PAYFAST_MODE || 'sandbox').trim().toLowerCase() === 'live' ? 'https://www.payfast.co.za/eng/process' : 'https://sandbox.payfast.co.za/eng/process', formFields: fields };
 }
 
 async function initiateYoco(body: any) {
@@ -300,7 +304,7 @@ async function initiateYoco(body: any) {
 }
 
 async function paypalToken() {
-  const base = (process.env.PAYPAL_MODE || 'sandbox') === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
+  const base = String(process.env.PAYPAL_MODE || 'sandbox').trim().toLowerCase() === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
   const auth = Buffer.from(`${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_SECRET_KEY_1}`).toString('base64');
   const response = await fetch(`${base}/v1/oauth2/token`, { method: 'POST', headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'grant_type=client_credentials' });
   const result = await response.json().catch(() => ({}));
