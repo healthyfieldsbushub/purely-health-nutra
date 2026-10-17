@@ -371,8 +371,8 @@ export default function AdminProducts() {
 
     try {
       for (const file of files) {
-        if (!file.type.startsWith('image/') || file.size > 5 * 1024 * 1024) {
-          skipped.push(`${file.name} (image only, max 5MB)`);
+        if (!file.type.startsWith('image/') || file.size > 10 * 1024 * 1024) {
+          skipped.push(`${file.name} (image only, max 10MB)`);
           continue;
         }
 
@@ -383,19 +383,18 @@ export default function AdminProducts() {
           continue;
         }
 
-        const extension = file.name.split('.').pop()?.toLowerCase() || 'jpg';
-        const storagePath = `products/${product.sku}.${extension}`;
-        const { error: uploadError } = await manus.storage
+        const storagePath = `products/${product.sku}.jpg`;
+        const { data: uploadData, error: uploadError } = await manus.storage
           .from('product-images')
           .upload(storagePath, file, { upsert: true, cacheControl: '31536000' });
         if (uploadError) throw uploadError;
 
-        const { data: { publicUrl } } = manus.storage.from('product-images').getPublicUrl(storagePath);
+        const publicUrl = uploadData?.publicUrl || manus.storage.from('product-images').getPublicUrl(storagePath).data.publicUrl;
         const existingImages = Array.isArray(product.images) ? product.images.filter(Boolean) : [];
         const images = [publicUrl, ...existingImages.filter((url: string) => url !== publicUrl)];
         const { error: updateError } = await manus
           .from('products')
-          .update({ primary_image_url: publicUrl, images })
+          .update({ primary_image_url: publicUrl, images, image_fingerprint: uploadData?.fingerprint || null, image_source_fingerprint: uploadData?.sourceFingerprint || null, image_processed_at: new Date().toISOString() })
           .eq('id', product.id);
         if (updateError) throw updateError;
         uploaded += 1;
@@ -419,7 +418,7 @@ export default function AdminProducts() {
             <h2 className="font-semibold flex items-center gap-2"><Upload className="h-4 w-4" /> Bulk product images</h2>
             <p className="text-sm text-muted-foreground mt-1">
               Upload multiple images to the Manus folder <code className="text-xs">product-images/products/</code>.
-              Name each file exactly after its SKU, for example <code className="text-xs">HF-FER-1025.jpg</code>.
+              Name each file exactly after its SKU, for example <code className="text-xs">HF-FER-1025.jpg</code>. Manus strips metadata, adds the standard bottom-left PHN watermark, resizes oversized images without enlarging, and stores an optimized WebP fingerprint.
             </p>
           </div>
           <label className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground cursor-pointer hover:bg-primary/90">
@@ -428,7 +427,7 @@ export default function AdminProducts() {
             <input type="file" accept="image/*" multiple className="hidden" onChange={uploadBulkProductImages} disabled={isBulkImageUploading} />
           </label>
         </div>
-        <p className="text-xs text-muted-foreground mt-3">JPG, PNG, WEBP or other browser image formats; maximum 5MB per image. Matching images automatically become the product primary image.</p>
+        <p className="text-xs text-muted-foreground mt-3">JPG, PNG, WEBP or other browser image formats; maximum 10MB per image. Manus removes embedded metadata, adds the standard PHN watermark and stores an optimized WebP. Matching images automatically become the product primary image.</p>
         {bulkImageSummary && (
           <div className="mt-3 text-sm">
             <p className="text-green-700">Uploaded: {bulkImageSummary.uploaded}</p>

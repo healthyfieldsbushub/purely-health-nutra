@@ -32,8 +32,8 @@ export function MultiImageUpload({
         toast.error(`${file.name} is not an image`);
         return false;
       }
-      if (file.size > 5 * 1024 * 1024) {
-        toast.error(`${file.name} is too large (max 5MB)`);
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error(`${file.name} is too large (max 10MB)`);
         return false;
       }
       return true;
@@ -54,7 +54,7 @@ export function MultiImageUpload({
         const fileExt = file.name.split('.').pop();
         const fileName = `${folder}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
 
-        const { error: uploadError } = await manus.storage
+        const { data: uploadData, error: uploadError } = await manus.storage
           .from(bucket)
           .upload(fileName, file, {
             cacheControl: '3600',
@@ -63,9 +63,7 @@ export function MultiImageUpload({
 
         if (uploadError) throw uploadError;
 
-        const { data: { publicUrl } } = manus.storage
-          .from(bucket)
-          .getPublicUrl(fileName);
+        const publicUrl = uploadData?.publicUrl || manus.storage.from(bucket).getPublicUrl(fileName).data.publicUrl;
 
         newUrls.push(publicUrl);
       }
@@ -232,7 +230,7 @@ export function MultiImageUpload({
                   Add images
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Drag & drop or click ({value.length}/{maxImages})
+                  Drag & drop or click — optimized, watermarked WebP (10MB max) ({value.length}/{maxImages})
                 </p>
               </>
             )}

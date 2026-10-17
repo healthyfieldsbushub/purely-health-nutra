@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Purely Health Nutra">
+  <circle cx="256" cy="256" r="232" fill="#0B3D2E" fill-opacity="0.82"/>
+  <circle cx="256" cy="256" r="190" fill="none" stroke="#F4B942" stroke-width="12" stroke-opacity="0.95"/>
+  <path d="M126 294c24-92 89-145 181-162 5 73-22 134-74 171-36 26-73 31-107 25Z" fill="#8FCB9B"/>
+  <path d="M139 327c51-48 105-88 165-120" fill="none" stroke="#FFF7EC" stroke-linecap="round" stroke-width="14"/>
+  <text x="256" y="392" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="66" font-weight="800" letter-spacing="-4" fill="#FFF7EC">PHN</text>
+</svg>

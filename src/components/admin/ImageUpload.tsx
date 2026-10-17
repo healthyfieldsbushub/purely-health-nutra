@@ -31,8 +31,8 @@ export function ImageUpload({
       return;
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('Image must be less than 5MB');
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('Image must be less than 10MB');
       return;
     }
 
@@ -42,7 +42,7 @@ export function ImageUpload({
       const fileExt = file.name.split('.').pop();
       const fileName = `${folder}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
 
-      const { error: uploadError } = await manus.storage
+      const { data: uploadData, error: uploadError } = await manus.storage
         .from(bucket)
         .upload(fileName, file, {
           cacheControl: '3600',
@@ -51,9 +51,7 @@ export function ImageUpload({
 
       if (uploadError) throw uploadError;
 
-      const { data: { publicUrl } } = manus.storage
-        .from(bucket)
-        .getPublicUrl(fileName);
+      const publicUrl = uploadData?.publicUrl || manus.storage.from(bucket).getPublicUrl(fileName).data.publicUrl;
 
       onChange(publicUrl);
       toast.success('Image uploaded successfully');
@@ -185,7 +183,7 @@ export function ImageUpload({
               Drop an image here, or click to browse
             </p>
             <p className="text-xs text-muted-foreground">
-              PNG, JPG, WebP or GIF (max 5MB)
+              PNG, JPG, WebP or GIF (max 10MB; optimized, watermarked WebP)
             </p>
           </>
         )}

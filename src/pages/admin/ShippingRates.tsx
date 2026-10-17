@@ -10,8 +10,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { manus } from "@/lib/manus-client";
+import { getShippingRates, type ShippingRate as LiveShippingRate } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, Package, Truck } from "lucide-react";
+import { Plus, Pencil, Trash2, Package, Truck, Calculator, Loader2 } from "lucide-react";
 
 interface ShippingRate {
   id: string;
@@ -47,6 +48,9 @@ const ShippingRates = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingRate, setEditingRate] = useState<ShippingRate | null>(null);
   const [formData, setFormData] = useState<Omit<ShippingRate, 'id'>>(emptyRate);
+  const [calculator, setCalculator] = useState({ origin: '1739', destination: '1751', weight: '1', length: '30', width: '20', height: '15' });
+  const [calculatedRates, setCalculatedRates] = useState<LiveShippingRate[]>([]);
+  const [isCalculating, setIsCalculating] = useState(false);
 
   const { data: rates = [], isLoading } = useQuery({
     queryKey: ['shipping-rates'],
@@ -137,6 +141,19 @@ const ShippingRates = () => {
     saveMutation.mutate(editingRate ? { ...formData, id: editingRate.id } : formData);
   };
 
+  const calculateLiveRates = async () => {
+    setIsCalculating(true);
+    try {
+      const rates = await getShippingRates(calculator.origin, calculator.destination, Number(calculator.weight), {
+        length: Number(calculator.length), width: Number(calculator.width), height: Number(calculator.height),
+      });
+      setCalculatedRates(rates);
+      if (!rates.length) toast.error('No live rates returned. Check provider credentials or address details.');
+    } finally {
+      setIsCalculating(false);
+    }
+  };
+
   const getProviderIcon = (provider: string) => {
     if (provider.startsWith('pudo')) return <Package className="h-4 w-4" />;
     return <Truck className="h-4 w-4" />;
@@ -164,6 +181,32 @@ const ShippingRates = () => {
             Add Rate
           </Button>
         </div>
+
+        <Card className="border-primary/20 bg-primary/5">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><Calculator className="h-5 w-5" /> Live Shipping Calculator</CardTitle>
+            <p className="text-sm text-muted-foreground">Test Courier Guy and PUDO using the parcel’s actual weight and dimensions in centimetres.</p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
+              {([['origin', 'Origin postal'], ['destination', 'Destination postal'], ['weight', 'Weight (kg)'], ['length', 'Length (cm)'], ['width', 'Width (cm)'], ['height', 'Height (cm)']] as const).map(([key, label]) => (
+                <div className="space-y-1" key={key}>
+                  <Label>{label}</Label>
+                  <Input type={key === 'origin' || key === 'destination' ? 'text' : 'number'} min={key === 'origin' || key === 'destination' ? undefined : '0.1'} step={key === 'weight' ? '0.1' : '1'} value={calculator[key]} onChange={(e) => setCalculator({ ...calculator, [key]: e.target.value })} />
+                </div>
+              ))}
+            </div>
+            <Button type="button" onClick={calculateLiveRates} disabled={isCalculating}>
+              {isCalculating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Calculator className="h-4 w-4 mr-2" />}
+              Calculate live rates
+            </Button>
+            {calculatedRates.length > 0 && (
+              <div className="grid gap-2 md:grid-cols-3">
+                {calculatedRates.map((rate) => <div key={`${rate.provider}-${rate.service}`} className="rounded-md border bg-background p-3"><div className="font-medium">{rate.service}</div><div className="text-lg font-semibold">R{rate.price.toFixed(2)}</div><div className="text-xs text-muted-foreground">{rate.provider} · {rate.estimatedDays}</div></div>)}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>

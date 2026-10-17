@@ -29,6 +29,13 @@
 - [ ] Shipping fulfillment: provide server-only Courier Guy and PUDO shipment-creation handlers using the selected service level, delivery contact/address, parcel dimensions and selected PUDO locker; never expose courier credentials to the browser.
 - [ ] Shipping readiness: show configured/not-configured status for Courier Guy and PUDO in the admin payment/integration status surface without displaying secrets, and do not claim live readiness until credentials and collection addresses are supplied in Manus.
 
+## Admin access and image pipeline
+
+- [ ] Public pages show an Admin Login link at the bottom of the site; authentication remains handled by the existing protected Manus login flow and no office password is embedded in source code.
+- [ ] Product image uploads accept up to 10 MB per original file, strip embedded metadata, preserve aspect ratio, resize only oversized images without upscaling, convert to optimized WebP, and add the standard transparent PHN watermark in the bottom-left corner.
+- [ ] Each processed upload receives a SHA-256 asset fingerprint and the product record stores the processed/source fingerprints for exact-file traceability; this does not claim to prevent search engines from recognizing visually identical images across websites.
+- [ ] The admin Shipping Rates page includes a live calculator using origin/destination postal codes, product weight in kilograms and parcel length/width/height in centimetres, and displays the returned Courier Guy/PUDO services and prices.
+
 ## Validation and delivery
 
 - [ ] Add `public/manus-routes.json` for all page routes and keep it synchronized with the React router.

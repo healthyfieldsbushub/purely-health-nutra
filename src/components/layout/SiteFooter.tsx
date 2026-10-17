@@ -87,11 +87,9 @@ export function SiteFooter() {
 
         <div className="border-t border-white/10 mt-12 pt-8 flex flex-col md:flex-row items-center justify-between gap-4 text-white/40 text-sm">
           <span>© {new Date().getFullYear()} Purely Health Nutra. All rights reserved.</span>
-          {isAdmin && (
-            <Link to="/admin" className="text-[#4ADE80] hover:text-white transition-colors text-xs font-medium">
-              Admin Dashboard
-            </Link>
-          )}
+          <Link to={isAdmin ? "/admin" : "/login?redirect=/admin"} className="text-[#4ADE80] hover:text-white transition-colors text-xs font-medium">
+            {isAdmin ? "Admin Dashboard" : "Admin Login"}
+          </Link>
         </div>
       </div>
     </footer>

@@ -7,6 +7,7 @@ import { URL } from 'node:url';
 import mysql from 'mysql2/promise';
 import { createServer as createViteServer, type ViteDevServer } from 'vite';
 import Busboy from 'busboy';
+import sharp from 'sharp';
 
 const port = Number(process.env.PORT || 3000);
 const root = process.cwd();
@@ -632,17 +633,41 @@ async function parseUpload(req: http.IncomingMessage): Promise<{ bucket: string;
   });
 }
 
+async function processImageUpload(file: Buffer, objectPath: string, contentType: string) {
+  if (!contentType.startsWith('image/')) return { file, objectPath, contentType, fingerprint: crypto.createHash('sha256').update(file).digest('hex') };
+  const sourceFingerprint = crypto.createHash('sha256').update(file).digest('hex');
+  const watermark = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><circle cx="256" cy="256" r="232" fill="#0B3D2E" fill-opacity="0.82"/><circle cx="256" cy="256" r="190" fill="none" stroke="#F4B942" stroke-width="12"/><path d="M126 294c24-92 89-145 181-162 5 73-22 134-74 171-36 26-73 31-107 25Z" fill="#8FCB9B"/><path d="M139 327c51-48 105-88 165-120" fill="none" stroke="#FFF7EC" stroke-linecap="round" stroke-width="14"/><text x="256" y="392" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="66" font-weight="800" letter-spacing="-4" fill="#FFF7EC">PHN</text></svg>`);
+  const image = sharp(file, { failOn: 'none' });
+  const metadata = await image.metadata();
+  const width = metadata.width || 1;
+  const height = metadata.height || 1;
+  const maxDimension = 2400;
+  const resized = width > maxDimension || height > maxDimension
+    ? image.resize({ width: maxDimension, height: maxDimension, fit: 'inside', withoutEnlargement: true })
+    : image;
+  const stampSize = Math.max(96, Math.min(240, Math.round(Math.min(width, height) * 0.18)));
+  const processed = await resized
+    .composite([{ input: await sharp(watermark).resize(stampSize, stampSize).png().toBuffer(), gravity: 'southwest', blend: 'over' }])
+    .webp({ quality: 88, effort: 5, smartSubsample: true })
+    .withMetadata({ orientation: undefined })
+    .toBuffer();
+  const fingerprint = crypto.createHash('sha256').update(processed).digest('hex');
+  const base = objectPath.replace(/\.[^.\/]+$/, '').replace(/[^A-Za-z0-9/_=.~-]/g, '_');
+  return { file: processed, objectPath: `${base}.${fingerprint.slice(0, 16)}.webp`, contentType: 'image/webp', fingerprint, sourceFingerprint };
+}
+
 async function storageRequest(req: http.IncomingMessage, res: http.ServerResponse) {
   if (req.method === 'DELETE') return json(res, 200, { ok: true, softDeleted: true });
   const upload = await parseUpload(req);
-  const key = `${upload.bucket}/${upload.objectPath}`.replace(/[^A-Za-z0-9/_=.~-]/g, '_');
+  const processed = await processImageUpload(upload.file, upload.objectPath, upload.contentType);
+  const key = `${upload.bucket}/${processed.objectPath}`.replace(/[^A-Za-z0-9/_=.~-]/g, '_');
   if (!process.env.MANUS_API_URL || !process.env.MANUS_API_KEY) return json(res, 503, { error: 'Manus storage is not available' });
   const presign = await fetch(`${process.env.MANUS_API_URL}/v1/storage/presign/put?path=${encodeURIComponent(key)}`, { headers: { Authorization: `Bearer ${process.env.MANUS_API_KEY}` } });
   const signed = await presign.json().catch(() => ({}));
   if (!presign.ok || !signed.url) return json(res, 502, { error: signed.error || 'Unable to prepare managed storage upload' });
-  const put = await fetch(signed.url, { method: 'PUT', headers: { 'Content-Type': upload.contentType || 'application/octet-stream' }, body: upload.file });
+  const put = await fetch(signed.url, { method: 'PUT', headers: { 'Content-Type': processed.contentType || 'application/octet-stream', 'Cache-Control': 'public, max-age=31536000, immutable' }, body: processed.file });
   if (!put.ok) return json(res, 502, { error: 'Managed storage upload failed' });
-  return json(res, 200, { data: { path: key, publicUrl: `/manus-storage/${key}` } });
+  return json(res, 200, { data: { path: key, publicUrl: `/manus-storage/${key}`, fingerprint: processed.fingerprint, sourceFingerprint: processed.sourceFingerprint || processed.fingerprint, processed: processed.contentType === 'image/webp' } });
 }
 
 async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse) {

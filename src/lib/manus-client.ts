@@ -157,7 +157,7 @@ class StorageClient {
         form.append('upsert', String(Boolean(options?.upsert)));
         const response = await fetch('/api/storage', { method: 'POST', body: form, credentials: 'include' });
         const body = await response.json().catch(() => ({}));
-        return { data: response.ok ? { path } : null, error: response.ok ? null : { message: body.error || 'Upload failed' } };
+        return { data: response.ok ? (body.data || { path }) : null, error: response.ok ? null : { message: body.error || 'Upload failed' } };
       },
       getPublicUrl: (path: string) => ({ data: { publicUrl: `/manus-storage/${bucket}/${path}` } }),
       remove: async (paths: string[]) => {
