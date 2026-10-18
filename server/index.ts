@@ -321,6 +321,61 @@ async function initiatePayPal(body: any) {
   return { success: true, orderId: result.id, approvalUrl: result.links?.find((link: any) => link.rel === 'approve')?.href, status: result.status };
 }
 
+async function createGuestOrder(body: any) {
+  const items = Array.isArray(body.items) ? body.items : [];
+  const address = body.shippingAddress || {};
+  if (!items.length) throw new Error('Cart is empty');
+  if (!String(address.name || '').trim() || !String(address.email || '').trim() || !String(address.address || '').trim() || !String(address.postalCode || '').trim()) {
+    throw new Error('Complete the required shipping details before placing the order');
+  }
+
+  const orderId = newId();
+  const orderNumber = `ORD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+  const accessToken = newId();
+  const subtotal = items.reduce((sum: number, item: any) => sum + Number(item.unitPrice || 0) * Math.max(1, Number(item.quantity || 1)), 0);
+  const shippingCost = Number(body.shippingCost || 0);
+  const rootingCost = Number(body.rootingCost || 0);
+  const discount = Number(body.couponDiscount || 0);
+  const total = Math.max(0, subtotal + shippingCost + rootingCost - discount);
+
+  await saveRecord('orders', {
+    id: orderId,
+    order_number: orderNumber,
+    access_token: accessToken,
+    guest_email: String(address.email).trim().toLowerCase(),
+    shipping_address: address,
+    billing_address: address,
+    shipping_method: String(body.shippingMethod || 'Standard'),
+    shipping_cost_zar: shippingCost,
+    subtotal_zar: subtotal + rootingCost,
+    discount_zar: discount,
+    total_zar: total,
+    status: 'pending',
+    payment_status: 'pending',
+    coupon_code: body.couponCode || null,
+    coupon_discount_zar: discount,
+    payment_method: body.paymentGateway || null,
+    created_at: now(),
+    updated_at: now(),
+  });
+
+  for (const item of items) {
+    const quantity = Math.max(1, Number(item.quantity || 1));
+    await saveRecord('order_items', {
+      id: newId(),
+      order_id: orderId,
+      product_id: String(item.productId || ''),
+      product_name: String(item.productName || 'Product'),
+      product_sku: String(item.productSku || ''),
+      quantity,
+      unit_price_zar: Number(item.unitPrice || 0),
+      total_price_zar: Number(item.unitPrice || 0) * quantity,
+      created_at: now(),
+    });
+  }
+  return { success: true, orderId, orderNumber };
+}
+
 function configured(keys: string[]) { return keys.every(key => Boolean(process.env[key])); }
 function courierGuyApiKey() { return String(process.env.COURIER_GUY_API_KEY || process.env.THE_COURIER_GUY_API || '').trim(); }
 function pudoApiKey() { return String(process.env.PUDO_API_KEY || process.env.PUDO_SHIPPING_API || '').trim(); }
@@ -537,10 +592,36 @@ async function pudoRates(body: any, lockerId: string) {
   const entries = Array.isArray(result) ? result : (result.rates || result.data || [result]);
   return entries.map((item: any) => normaliseRate(item, 'pudo', 'PUDO Locker')).filter((rate: any) => rate.price >= 0);
 }
+async function configuredShippingRates(body: any) {
+  const weight = Number(body.weight || 0);
+  const dimensions = body.dimensions || {};
+  const length = Number(dimensions.length || 0);
+  const width = Number(dimensions.width || 0);
+  const height = Number(dimensions.height || 0);
+  const rows = await allRecords('shipping_rates');
+  return rows
+    .filter((row: any) => row.is_active !== false)
+    .filter((row: any) => !Number.isFinite(Number(row.max_weight_kg)) || Number(row.max_weight_kg) <= 0 || weight <= Number(row.max_weight_kg))
+    .filter((row: any) => !Number.isFinite(Number(row.max_length_cm)) || Number(row.max_length_cm) <= 0 || length <= Number(row.max_length_cm))
+    .filter((row: any) => !Number.isFinite(Number(row.max_width_cm)) || Number(row.max_width_cm) <= 0 || width <= Number(row.max_width_cm))
+    .filter((row: any) => !Number.isFinite(Number(row.max_height_cm)) || Number(row.max_height_cm) <= 0 || height <= Number(row.max_height_cm))
+    .sort((a: any, b: any) => Number(a.sort_order || 0) - Number(b.sort_order || 0))
+    .map((row: any) => ({
+      provider: String(row.provider || 'custom'),
+      service: String(row.service_name || row.service_code || 'Standard delivery'),
+      price: Number(row.price_zar || 0),
+      estimatedDays: 'Configured rate',
+      description: String(row.description || `${row.provider || 'Custom'} rate configured in Admin`),
+    }));
+}
 async function shippingRates(body: any) {
   const rates: any[] = [];
   const errors: any[] = [];
   const provider = body.provider || 'all';
+  if (!body.liveOnly) {
+    const configuredRates = await configuredShippingRates(body);
+    if (configuredRates.length) return { rates: configuredRates, errors: [] };
+  }
   if (provider !== 'pudo') {
     try { rates.push(...await courierGuyRates(body)); } catch (error) { errors.push(providerDiagnostic(error)); }
   }
@@ -590,6 +671,7 @@ async function functionRequest(req: http.IncomingMessage, res: http.ServerRespon
     ? Object.fromEntries(new URL(req.url || '/', 'http://localhost').searchParams.entries())
     : await readJson(req);
   try {
+    if (name === 'create-order') return json(res, 200, await createGuestOrder(body));
     if (name === 'payment-config') return json(res, 200, { data: await paymentConfig() });
     if (name === 'payfast-payment') return json(res, 200, { data: await initiatePayFast({ ...body, origin: `${body.origin || ''}` }) });
     if (name === 'yoco-payment') return json(res, 200, { data: await initiateYoco(body) });

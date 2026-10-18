@@ -33,6 +33,7 @@ export async function getShippingRates(
   dimensions?: { length: number; width: number; height: number },
   destinationAddress?: Record<string, unknown>,
   pudoLockerId?: string,
+  liveOnly = false,
 ): Promise<ShippingRate[]> {
   try {
     const response = await fetch(`${API_BASE}/api/functions/shipping-rates`, {
@@ -47,6 +48,7 @@ export async function getShippingRates(
         dimensions,
         destinationAddress,
         pudoLockerId,
+        liveOnly,
         provider: "all",
       }),
     });

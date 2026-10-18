@@ -146,7 +146,7 @@ const ShippingRates = () => {
     try {
       const rates = await getShippingRates(calculator.origin, calculator.destination, Number(calculator.weight), {
         length: Number(calculator.length), width: Number(calculator.width), height: Number(calculator.height),
-      });
+      }, undefined, undefined, true);
       setCalculatedRates(rates);
       if (!rates.length) toast.error('No live rates returned. Check provider credentials or address details.');
     } finally {

@@ -247,7 +247,7 @@ const Checkout = () => {
     try {
       const lockers = await getPudoLockers(shippingData.postalCode);
       const rates = await getShippingRates(
-        "0001",
+        "1739",
         shippingData.postalCode,
         productDimensions.totalWeight,
         {
@@ -358,7 +358,7 @@ const Checkout = () => {
           includeRooting: item.includeRooting,
         })),
         shippingData,
-        selectedShipping?.provider === "pudo" && selectedLocker
+        selectedShipping?.provider?.startsWith("pudo") && selectedLocker
           ? `${selectedShipping.service} - ${selectedLocker.name} (${selectedLocker.id})`
           : selectedShipping?.service || "Standard",
         shippingCost,
@@ -748,14 +748,14 @@ const Checkout = () => {
                                   <RadioGroupItem value={rate.service} id={rate.service} />
                                   <div className="flex-1">
                                     <div className="flex items-center gap-2">
-                                      {rate.provider === "pudo" ? (
+                                      {rate.provider?.startsWith("pudo") ? (
                                         <Package className="h-4 w-4 text-primary" />
                                       ) : (
                                         <Truck className="h-4 w-4 text-primary" />
                                       )}
                                       <span className="font-medium">{rate.service}</span>
                                       <span className="text-xs px-2 py-0.5 rounded-full bg-muted">
-                                        {rate.provider === "pudo" ? "PUDO Locker" : "Courier Guy"}
+                                        {rate.provider?.startsWith("pudo") ? "PUDO" : "Courier Guy"}
                                       </span>
                                     </div>
                                     <p className="text-sm text-muted-foreground mt-1">
@@ -771,7 +771,7 @@ const Checkout = () => {
                           )}
 
                           {/* PUDO Locker Selection */}
-                          {selectedShipping?.provider === "pudo" && pudoLockers.length > 0 && (
+                          {selectedShipping?.provider?.startsWith("pudo") && pudoLockers.length > 0 && (
                             <div className="mt-4 p-4 rounded-lg bg-muted/30 border">
                               <h4 className="font-medium mb-3 flex items-center gap-2">
                                 <MapPin className="h-4 w-4 text-primary" />
