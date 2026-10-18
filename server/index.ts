@@ -275,6 +275,7 @@ function payfastSignature(fields: Record<string, string>, passphrase?: string) {
 
 async function initiatePayFast(body: any) {
   if (!process.env.PAYFAST_MERCHANT_ID || !process.env.PAYFAST_MERCHANT_KEY || !process.env.PAYFAST_SECURITY_PASSPHRASE) throw new Error('PayFast is not fully configured in Manus secrets');
+  if (!Number.isFinite(Number(body.amount)) || Number(body.amount) <= 0) throw new Error('PayFast amount must be greater than zero');
   const origin = String(body.origin || (() => {
     try { return new URL(String(body.returnUrl || '')).origin; } catch { return ''; }
   })());
@@ -297,27 +298,44 @@ async function initiatePayFast(body: any) {
 async function initiateYoco(body: any) {
   if (!process.env.YOCO_API_KEY) throw new Error('Yoco is not configured in Manus secrets');
   const endpoint = 'https://payments.yoco.com/api/checkouts';
-  const response = await fetch(endpoint, { method: 'POST', headers: { Authorization: `Bearer ${process.env.YOCO_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ amount: Math.round(Number(body.amount || 0) * 100), currency: body.currency || 'ZAR', successUrl: body.successUrl, cancelUrl: body.cancelUrl, metadata: { orderId: body.orderId } }) });
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.YOCO_API_KEY}`,
+      'Content-Type': 'application/json',
+      'Idempotency-Key': String(body.orderId || newId()),
+    },
+    signal: AbortSignal.timeout(providerRequestTimeoutMs),
+    body: JSON.stringify({
+      amount: Math.round(Number(body.amount || 0) * 100),
+      currency: body.currency || 'ZAR',
+      successUrl: body.successUrl,
+      cancelUrl: body.cancelUrl,
+      failureUrl: body.failureUrl || body.cancelUrl,
+      metadata: { orderId: String(body.orderId || ''), customerEmail: String(body.customerEmail || '') },
+      externalId: String(body.orderId || ''),
+    }),
+  });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.message || 'Yoco checkout creation failed');
+  if (!response.ok) throw new ProviderError('Yoco', `Yoco checkout creation failed: ${String(result.message || result.reason || result.error || 'upstream request rejected').slice(0, 300)}`, response.status === 401 || response.status === 403 ? 424 : 422, response.status);
   return { success: true, redirectUrl: result.redirectUrl || result.redirect_url, checkoutId: result.id };
 }
 
 async function paypalToken() {
   const base = String(process.env.PAYPAL_MODE || 'sandbox').trim().toLowerCase() === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
   const auth = Buffer.from(`${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_SECRET_KEY_1}`).toString('base64');
-  const response = await fetch(`${base}/v1/oauth2/token`, { method: 'POST', headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'grant_type=client_credentials' });
+  const response = await fetch(`${base}/v1/oauth2/token`, { method: 'POST', headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' }, signal: AbortSignal.timeout(providerRequestTimeoutMs), body: 'grant_type=client_credentials' });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.error_description || 'PayPal authentication failed');
+  if (!response.ok) throw new ProviderError('PayPal', `PayPal authentication failed: ${String(result.error_description || result.error || 'invalid credentials').slice(0, 300)}`, response.status === 401 || response.status === 403 ? 424 : 422, response.status);
   return { base, token: result.access_token };
 }
 
 async function initiatePayPal(body: any) {
   if (!process.env.PAYPAL_CLIENT_ID || !process.env.PAYPAL_SECRET_KEY_1) throw new Error('PayPal is not configured in Manus secrets');
   const { base, token } = await paypalToken();
-  const response = await fetch(`${base}/v2/checkout/orders`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'PayPal-Request-Id': String(body.orderId || newId()) }, body: JSON.stringify({ intent: 'CAPTURE', purchase_units: [{ reference_id: String(body.orderId || ''), amount: { currency_code: body.currency || 'USD', value: Number(body.amount || 0).toFixed(2) } }], application_context: { return_url: body.successUrl, cancel_url: body.cancelUrl } }) });
+  const response = await fetch(`${base}/v2/checkout/orders`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'PayPal-Request-Id': String(body.orderId || newId()) }, signal: AbortSignal.timeout(providerRequestTimeoutMs), body: JSON.stringify({ intent: 'CAPTURE', purchase_units: [{ reference_id: String(body.orderId || ''), amount: { currency_code: body.currency || 'ZAR', value: Number(body.amount || 0).toFixed(2) } }], application_context: { return_url: body.successUrl, cancel_url: body.cancelUrl, user_action: 'PAY_NOW' } }) });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.message || 'PayPal order creation failed');
+  if (!response.ok) throw new ProviderError('PayPal', `PayPal order creation failed: ${String(result.message || result.details?.[0]?.description || result.error_description || 'upstream request rejected').slice(0, 300)}`, response.status === 401 || response.status === 403 ? 424 : 422, response.status);
   return { success: true, orderId: result.id, approvalUrl: result.links?.find((link: any) => link.rel === 'approve')?.href, status: result.status };
 }
 
@@ -696,6 +714,12 @@ async function functionRequest(req: http.IncomingMessage, res: http.ServerRespon
     if (error instanceof ProviderError && name === 'shipping-rates') return json(res, 200, { rates: [], errors: [providerDiagnostic(error)] });
     if (error instanceof ProviderError && name === 'pudo-lockers') return json(res, 200, { lockers: [], error: error.message, provider: error.provider, upstreamStatus: error.upstreamStatus });
     if (error instanceof ProviderError && name === 'social-feed') return json(res, 200, { data: { platform: body.platform, accountName: body.platform === 'instagram' ? '@instagram' : process.env.FACEBOOK_PAGE_NAME || 'Facebook Page', items: [], hasMore: false, error: providerDiagnostic(error) } });
+    if (['payfast-payment', 'yoco-payment', 'paypal-payment'].includes(name)) {
+      const diagnostic = error instanceof ProviderError
+        ? { provider: error.provider, error: error.message, upstreamStatus: error.upstreamStatus }
+        : { provider: name.replace('-payment', ''), error: error?.message || 'Payment provider request failed' };
+      return json(res, 200, { data: { success: false, ...diagnostic } });
+    }
     if (error instanceof ProviderError) return json(res, error.httpStatus, { error: error.message, provider: error.provider, upstreamStatus: error.upstreamStatus });
     if (name === 'social-feed') return json(res, 200, { data: { platform: body.platform, accountName: String(body.platform).toLowerCase() === 'instagram' ? '@instagram' : process.env.FACEBOOK_PAGE_NAME || 'Facebook Page', items: [], hasMore: false, error: { provider: 'Meta', error: error?.message || 'Social feed request failed' } } });
     return json(res, 502, { error: error?.message || 'Server function failed' });

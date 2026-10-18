@@ -214,7 +214,7 @@ const Checkout = () => {
 
   // Fetch shipping rates when postal code or dimensions change
   useEffect(() => {
-    if (shippingData.postalCode.length >= 4 && productDimensions.totalWeight > 0) {
+    if (shippingData.postalCode.length >= 4 && items.length > 0) {
       fetchShippingRatesWithRetry();
     }
     
@@ -245,11 +245,18 @@ const Checkout = () => {
     setRetryCount(attempt);
 
     try {
-      const lockers = await getPudoLockers(shippingData.postalCode);
+      // Configured admin rates must not be blocked by a live locker lookup.
+      // Locker lookup is optional for door delivery and may fail independently.
+      let lockers: PudoLocker[] = [];
+      try {
+        lockers = await getPudoLockers(shippingData.postalCode);
+      } catch (lockerError) {
+        console.warn("PUDO locker lookup unavailable; continuing with configured rates", lockerError);
+      }
       const rates = await getShippingRates(
         "1739",
         shippingData.postalCode,
-        productDimensions.totalWeight,
+        Math.max(productDimensions.totalWeight, 0.1),
         {
           length: productDimensions.maxLength,
           width: productDimensions.maxWidth,
@@ -724,9 +731,9 @@ const Checkout = () => {
                             </div>
                           ) : (
                             <RadioGroup
-                              value={selectedShipping?.service || ""}
+                              value={selectedShipping ? `${selectedShipping.provider}:${selectedShipping.service}` : ""}
                               onValueChange={(value) => {
-                                const rate = shippingRates.find((r) => r.service === value);
+                                const rate = shippingRates.find((r) => `${r.provider}:${r.service}` === value);
                                 setSelectedShipping(rate || null);
                                 setSelectedLocker(null);
                               }}
@@ -736,7 +743,7 @@ const Checkout = () => {
                                 <div
                                   key={`${rate.provider}-${rate.service}`}
                                   className={`flex items-center space-x-3 p-4 rounded-lg border transition-all cursor-pointer ${
-                                    selectedShipping?.service === rate.service
+                                    selectedShipping?.provider === rate.provider && selectedShipping?.service === rate.service
                                       ? "border-primary bg-primary/5 ring-1 ring-primary"
                                       : "border-border hover:border-primary/50"
                                   }`}
@@ -745,7 +752,7 @@ const Checkout = () => {
                                     setSelectedLocker(null);
                                   }}
                                 >
-                                  <RadioGroupItem value={rate.service} id={rate.service} />
+                                  <RadioGroupItem value={`${rate.provider}:${rate.service}`} id={`${rate.provider}:${rate.service}`} />
                                   <div className="flex-1">
                                     <div className="flex items-center gap-2">
                                       {rate.provider?.startsWith("pudo") ? (
