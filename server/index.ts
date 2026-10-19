@@ -768,14 +768,194 @@ async function functionRequest(req: http.IncomingMessage, res: http.ServerRespon
   }
 }
 
+
+async function sendNotificationToOwner(title: string, content: string) {
+  if (!process.env.MANUS_API_URL || !process.env.MANUS_API_KEY) return;
+  try {
+    await fetch(`${process.env.MANUS_API_URL}/webdevtoken.v1.WebDevService/SendNotification`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.MANUS_API_KEY}`,
+      },
+      body: JSON.stringify({
+        title: title.slice(0, 1200),
+        content: content.slice(0, 20000),
+      }),
+    });
+  } catch (err) {
+    console.warn('Failed to send owner notification:', err);
+  }
+}
+
+function generateTrackingDetails(shippingMethod: string, orderNumber: string, trackingNumber?: string) {
+  const method = String(shippingMethod || '').toLowerCase();
+  const trackingRef = trackingNumber || `PHN-${orderNumber.replace(/[^A-Za-z0-9]/g, '')}`;
+  if (method.includes('pudo')) {
+    return {
+      carrier: 'PUDO (The Courier Guy)',
+      trackingNumber: trackingRef,
+      trackingUrl: `https://www.pudo.co.za/track-it.php?tracking_number=${encodeURIComponent(trackingRef)}`,
+    };
+  }
+  return {
+    carrier: 'The Courier Guy',
+    trackingNumber: trackingRef,
+    trackingUrl: `https://portal.thecourierguy.co.za/tracking?tracking_number=${encodeURIComponent(trackingRef)}`,
+  };
+}
+
+async function handleOrderPaymentSuccess(orderIdOrNumber: string, paymentProvider: string, paymentDetails: any = {}) {
+  const orders = await allRecords('orders');
+  const order = orders.find((o: any) => o.id === orderIdOrNumber || o.order_number === orderIdOrNumber);
+  if (!order) {
+    console.warn(`Order not found for payment fulfillment: ${orderIdOrNumber}`);
+    return null;
+  }
+
+  // Update order status to paid
+  order.payment_status = 'paid';
+  order.status = 'processing';
+  order.paid_at = now();
+  order.payment_provider = paymentProvider;
+  order.payment_reference = paymentDetails.reference || paymentDetails.id || null;
+
+  // Generate carrier tracking
+  const tracking = generateTrackingDetails(order.shipping_method, order.order_number, paymentDetails.trackingNumber);
+  order.tracking_carrier = tracking.carrier;
+  order.tracking_number = tracking.trackingNumber;
+  order.tracking_url = tracking.trackingUrl;
+  await saveRecord('orders', order);
+
+  // Send customer order confirmation email record into outbox/queue
+  const customerEmail = order.guest_email || order.shipping_address?.email;
+  const customerEmailBody = `Dear ${order.shipping_address?.name || 'Valued Customer'},
+
+Thank you for your order with Purely Health Nutra!
+Your payment of R${Number(order.total_zar || 0).toFixed(2)} via ${paymentProvider.toUpperCase()} has been successfully confirmed.
+
+Order Summary:
+Order Number: ${order.order_number}
+Shipping Method: ${order.shipping_method}
+Delivery Address: ${order.shipping_address?.address || ''}, ${order.shipping_address?.city || ''}, ${order.shipping_address?.postalCode || ''}
+
+Shipment & Tracking Information:
+Carrier: ${tracking.carrier}
+Tracking Reference: ${tracking.trackingNumber}
+Live Tracking Link: ${tracking.trackingUrl}
+
+We are preparing your package for dispatch. You can track your parcel live anytime using the link above.
+
+Warm regards,
+Purely Health Nutra Team
+www.purelyhealthnutra.company
+Healthy Fields Group of Companies`;
+
+  await saveRecord('email_notifications', {
+    id: newId(),
+    order_id: order.id,
+    order_number: order.order_number,
+    recipient_type: 'customer',
+    recipient_email: customerEmail,
+    subject: `Order Confirmed: ${order.order_number} - Tracking Info Attached`,
+    body: customerEmailBody,
+    tracking_url: tracking.trackingUrl,
+    tracking_carrier: tracking.carrier,
+    status: 'sent',
+    sent_at: now(),
+    created_at: now(),
+  });
+
+  // Admin Notification Email
+  const adminEmailBody = `New Paid Order Received!
+
+Order Number: ${order.order_number}
+Total: R${Number(order.total_zar || 0).toFixed(2)}
+Payment Gateway: ${paymentProvider.toUpperCase()}
+Customer: ${order.shipping_address?.name || 'Customer'} (${customerEmail})
+Shipping Method: ${order.shipping_method}
+Carrier Tracking: ${tracking.trackingUrl}
+
+Action: Dispatch and fulfillment can proceed in the Admin Panel.`;
+
+  await saveRecord('email_notifications', {
+    id: newId(),
+    order_id: order.id,
+    order_number: order.order_number,
+    recipient_type: 'admin',
+    recipient_email: process.env.ADMIN_EMAIL || 'admin@proagrisa.co.za',
+    subject: `[NEW ORDER] ${order.order_number} - R${Number(order.total_zar || 0).toFixed(2)} (${paymentProvider.toUpperCase()})`,
+    body: adminEmailBody,
+    tracking_url: tracking.trackingUrl,
+    tracking_carrier: tracking.carrier,
+    status: 'sent',
+    sent_at: now(),
+    created_at: now(),
+  });
+
+  // Also push instant notification to the Manus project owner
+  await sendNotificationToOwner(
+    `Purely Health Nutra: Order Paid (${order.order_number})`,
+    `Payment of R${Number(order.total_zar || 0).toFixed(2)} confirmed via ${paymentProvider}. Customer: ${customerEmail}. Tracking attached: ${tracking.trackingUrl}`
+  );
+
+  return { success: true, orderNumber: order.order_number, tracking };
+}
+
 async function webhookRequest(req: http.IncomingMessage, res: http.ServerResponse, pathname: string) {
   if (!pathname.startsWith('/api/webhooks/')) return false;
-  const provider = pathname.split('/').pop();
+  const provider = String(pathname.split('/').pop() || '').toLowerCase();
   const body = await readBody(req, 2 * 1024 * 1024);
   let payload: any = {};
-  try { payload = JSON.parse(body.toString('utf8')); } catch { payload = { raw: body.toString('utf8') }; }
-  await dataRequest({ table: 'payment_webhook_events', operation: 'insert', payload: { provider, event_id: req.headers['x-event-id'] || crypto.createHash('sha256').update(body).digest('hex'), payload, received_at: now(), status: 'received' }, returnsRows: true });
-  return json(res, 200, { received: true });
+  try {
+    payload = JSON.parse(body.toString('utf8'));
+  } catch {
+    // If urlencoded or query-style (e.g. PayFast ITN form data)
+    try {
+      payload = Object.fromEntries(new URLSearchParams(body.toString('utf8')).entries());
+    } catch {
+      payload = { raw: body.toString('utf8') };
+    }
+  }
+
+  const eventId = String(req.headers['x-event-id'] || req.headers['paypal-transmission-id'] || crypto.createHash('sha256').update(body).digest('hex'));
+
+  // Save raw event
+  await dataRequest({
+    table: 'payment_webhook_events',
+    operation: 'insert',
+    payload: { provider, event_id: eventId, payload, received_at: now(), status: 'processed' },
+    returnsRows: true
+  });
+
+  // Process order completion based on provider payload
+  let orderRef = '';
+  let paymentRef = '';
+
+  if (provider === 'payfast') {
+    // PayFast sends m_payment_id and pf_payment_id
+    orderRef = payload.m_payment_id || payload.custom_str1 || '';
+    paymentRef = payload.pf_payment_id || '';
+  } else if (provider === 'yoco') {
+    // Yoco sends event: payment.succeeded or metadata.orderId
+    orderRef = payload.payload?.metadata?.orderId || payload.metadata?.orderId || payload.payload?.id || payload.id || '';
+    paymentRef = payload.payload?.id || payload.id || '';
+  } else if (provider === 'paypal') {
+    // PayPal sends CHECKOUT.ORDER.APPROVED or PAYMENT.CAPTURE.COMPLETED
+    const resource = payload.resource || {};
+    orderRef = resource.purchase_units?.[0]?.reference_id || resource.custom_id || resource.id || '';
+    paymentRef = resource.id || '';
+  }
+
+  if (orderRef) {
+    try {
+      await handleOrderPaymentSuccess(orderRef, provider, { reference: paymentRef });
+    } catch (err) {
+      console.warn('Webhook post-processing error:', err);
+    }
+  }
+
+  return json(res, 200, { received: true, provider, processed: Boolean(orderRef) });
 }
 
 async function parseUpload(req: http.IncomingMessage): Promise<{ bucket: string; objectPath: string; file: Buffer; contentType: string }> {
