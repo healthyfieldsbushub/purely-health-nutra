@@ -947,15 +947,39 @@ async function webhookRequest(req: http.IncomingMessage, res: http.ServerRespons
     paymentRef = resource.id || '';
   }
 
+  let eventStatus = 'success';
+  if (provider === 'payfast') {
+    if (payload.payment_status === 'FAILED') eventStatus = 'failed';
+    if (payload.payment_status === 'CANCELLED') eventStatus = 'failed';
+    if (payload.payment_status === 'REFUNDED') eventStatus = 'refunded';
+  } else if (provider === 'yoco') {
+    if (payload.event === 'payment.failed') eventStatus = 'failed';
+    if (payload.event === 'payment.refunded') eventStatus = 'refunded';
+  } else if (provider === 'paypal') {
+    if (payload.event_type === 'PAYMENT.CAPTURE.DENIED') eventStatus = 'failed';
+    if (payload.event_type === 'PAYMENT.CAPTURE.REFUNDED') eventStatus = 'refunded';
+  }
+
   if (orderRef) {
     try {
-      await handleOrderPaymentSuccess(orderRef, provider, { reference: paymentRef });
+      if (eventStatus === 'success') {
+        await handleOrderPaymentSuccess(orderRef, provider, { reference: paymentRef });
+      } else {
+        const orders = await allRecords('orders');
+        const order = orders.find((o: any) => o.id === orderRef || o.order_number === orderRef);
+        if (order) {
+          order.payment_status = eventStatus;
+          if (eventStatus === 'failed') order.status = 'failed';
+          if (eventStatus === 'refunded') order.status = 'refunded';
+          await saveRecord('orders', order);
+        }
+      }
     } catch (err) {
       console.warn('Webhook post-processing error:', err);
     }
   }
 
-  return json(res, 200, { received: true, provider, processed: Boolean(orderRef) });
+  return json(res, 200, { received: true, provider, processed: Boolean(orderRef), eventStatus });
 }
 
 async function parseUpload(req: http.IncomingMessage): Promise<{ bucket: string; objectPath: string; file: Buffer; contentType: string }> {
