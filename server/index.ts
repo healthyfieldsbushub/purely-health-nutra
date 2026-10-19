@@ -353,6 +353,7 @@ async function initiatePayPal(body: any) {
       intent: 'CAPTURE',
       purchase_units: [{
         reference_id: String(body.orderId || ''),
+        custom_id: String(body.orderId || '').slice(0, 127),
         description: String(body.itemName || 'Purely Health Nutra order').slice(0, 127),
         amount: {
           currency_code: currencyCode,
@@ -918,53 +919,93 @@ async function webhookRequest(req: http.IncomingMessage, res: http.ServerRespons
     }
   }
 
+  if (provider === 'paypal') {
+    const webhookId = String(process.env.PAYPAL_WEBHOOK_ID || '').trim();
+    const requiredHeaders = ['paypal-auth-algo', 'paypal-cert-url', 'paypal-transmission-id', 'paypal-transmission-sig', 'paypal-transmission-time'];
+    const signatureHeaders = Object.fromEntries(requiredHeaders.map(name => [name, String(req.headers[name] || '')]));
+    if (!webhookId || requiredHeaders.some(name => !signatureHeaders[name])) {
+      return json(res, 400, { received: false, provider, error: 'PayPal webhook signature headers or webhook ID are missing' });
+    }
+    try {
+      const { base, token } = await paypalToken();
+      const verification = await fetch(`${base}/v1/notifications/verify-webhook-signature`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(providerRequestTimeoutMs),
+        body: JSON.stringify({
+          auth_algo: signatureHeaders['paypal-auth-algo'],
+          cert_url: signatureHeaders['paypal-cert-url'],
+          transmission_id: signatureHeaders['paypal-transmission-id'],
+          transmission_sig: signatureHeaders['paypal-transmission-sig'],
+          transmission_time: signatureHeaders['paypal-transmission-time'],
+          webhook_id: webhookId,
+          webhook_event: payload,
+        }),
+      });
+      const result = await verification.json().catch(() => ({}));
+      if (!verification.ok || result.verification_status !== 'SUCCESS') {
+        return json(res, 401, { received: false, provider, error: 'PayPal webhook signature verification failed' });
+      }
+    } catch (error: any) {
+      console.warn('PayPal webhook verification error:', error?.message || 'verification request failed');
+      return json(res, 503, { received: false, provider, error: 'PayPal webhook verification unavailable' });
+    }
+  }
+
   const eventId = String(req.headers['x-event-id'] || req.headers['paypal-transmission-id'] || crypto.createHash('sha256').update(body).digest('hex'));
 
-  // Save raw event
-  await dataRequest({
-    table: 'payment_webhook_events',
-    operation: 'insert',
-    payload: { provider, event_id: eventId, payload, received_at: now(), status: 'processed' },
-    returnsRows: true
-  });
+  const existingEvents = await allRecords('payment_webhook_events');
+  if (existingEvents.some(event => String(event.event_id || '') === eventId)) {
+    return json(res, 200, { received: true, provider, processed: false, duplicate: true, eventId });
+  }
 
   // Process order completion based on provider payload
   let orderRef = '';
   let paymentRef = '';
+  let eventStatus = 'ignored';
+  let eventType = '';
+  let resourceId = '';
 
   if (provider === 'payfast') {
     // PayFast sends m_payment_id and pf_payment_id
     orderRef = payload.m_payment_id || payload.custom_str1 || '';
     paymentRef = payload.pf_payment_id || '';
+    eventType = String(payload.payment_status || '');
+    eventStatus = eventType === 'COMPLETE' ? 'success' : eventType === 'REFUNDED' ? 'refunded' : ['FAILED', 'CANCELLED'].includes(eventType) ? 'failed' : 'ignored';
   } else if (provider === 'yoco') {
     // Yoco sends event: payment.succeeded or metadata.orderId
     orderRef = payload.payload?.metadata?.orderId || payload.metadata?.orderId || payload.payload?.id || payload.id || '';
     paymentRef = payload.payload?.id || payload.id || '';
+    eventType = String(payload.event || '');
+    eventStatus = eventType === 'payment.succeeded' ? 'success' : eventType === 'payment.refunded' ? 'refunded' : eventType === 'payment.failed' ? 'failed' : 'ignored';
   } else if (provider === 'paypal') {
-    // PayPal sends CHECKOUT.ORDER.APPROVED or PAYMENT.CAPTURE.COMPLETED
+    // PayPal sends order, authorization, capture, refund and reversal events.
     const resource = payload.resource || {};
-    orderRef = resource.purchase_units?.[0]?.reference_id || resource.custom_id || resource.id || '';
-    paymentRef = resource.id || '';
+    eventType = String(payload.event_type || '');
+    resourceId = String(resource.id || '');
+    orderRef = resource.purchase_units?.[0]?.reference_id
+      || resource.purchase_units?.[0]?.custom_id
+      || resource.custom_id
+      || payload.resource?.supplementary_data?.related_ids?.order_id
+      || '';
+    paymentRef = resource.id || payload.resource?.supplementary_data?.related_ids?.capture_id || '';
+    if (eventType === 'PAYMENT.CAPTURE.COMPLETED') eventStatus = 'success';
+    else if (['PAYMENT.CAPTURE.REFUNDED', 'PAYMENT.CAPTURE.REVERSED'].includes(eventType)) eventStatus = 'refunded';
+    else if (['PAYMENT.CAPTURE.DENIED', 'PAYMENT.CAPTURE.DECLINED', 'PAYMENT.AUTHORIZATION.VOIDED', 'CHECKOUT.PAYMENT-APPROVAL.REVERSED'].includes(eventType)) eventStatus = 'failed';
+    else if (['CHECKOUT.ORDER.APPROVED', 'PAYMENT.CAPTURE.PENDING', 'PAYMENT.AUTHORIZATION.CREATED'].includes(eventType)) eventStatus = 'pending';
   }
 
-  let eventStatus = 'success';
-  if (provider === 'payfast') {
-    if (payload.payment_status === 'FAILED') eventStatus = 'failed';
-    if (payload.payment_status === 'CANCELLED') eventStatus = 'failed';
-    if (payload.payment_status === 'REFUNDED') eventStatus = 'refunded';
-  } else if (provider === 'yoco') {
-    if (payload.event === 'payment.failed') eventStatus = 'failed';
-    if (payload.event === 'payment.refunded') eventStatus = 'refunded';
-  } else if (provider === 'paypal') {
-    if (payload.event_type === 'PAYMENT.CAPTURE.DENIED') eventStatus = 'failed';
-    if (payload.event_type === 'PAYMENT.CAPTURE.REFUNDED') eventStatus = 'refunded';
-  }
+  // Persist only the event metadata required for audit and deduplication, never the raw PayPal payload.
+  await saveRecord('payment_webhook_events', {
+    id: newId(), provider, event_id: eventId, event_type: eventType, resource_id: resourceId,
+    order_ref: orderRef, payment_ref: paymentRef, status: eventStatus, received_at: now()
+  });
 
   if (orderRef) {
     try {
       if (eventStatus === 'success') {
         await handleOrderPaymentSuccess(orderRef, provider, { reference: paymentRef });
-      } else {
+      } else if (eventStatus === 'failed' || eventStatus === 'refunded') {
         const orders = await allRecords('orders');
         const order = orders.find((o: any) => o.id === orderRef || o.order_number === orderRef);
         if (order) {
@@ -979,7 +1020,7 @@ async function webhookRequest(req: http.IncomingMessage, res: http.ServerRespons
     }
   }
 
-  return json(res, 200, { received: true, provider, processed: Boolean(orderRef), eventStatus });
+  return json(res, 200, { received: true, provider, processed: Boolean(orderRef), eventType, eventStatus });
 }
 
 async function parseUpload(req: http.IncomingMessage): Promise<{ bucket: string; objectPath: string; file: Buffer; contentType: string }> {
@@ -1063,6 +1104,7 @@ async function createApp() {
       const requestUrl = new URL(req.url || '/', 'http://localhost');
       const pathname = requestUrl.pathname;
       if (pathname === '/health' || pathname === '/api/health') return json(res, 200, { ok: true, platform: 'manus', database: Boolean(pool) });
+      if (pathname === '/api/health/paypal-webhook') return json(res, 200, { ok: true, listener: 'paypal-webhook', method: req.method, timestamp: now() });
       if (pathname === '/api/data' && req.method === 'POST') return json(res, 200, await dataRequest(await readJson(req)));
       const authHandled = await authRequest(req, res, pathname); if (authHandled !== false) return;
       const functionHandled = await functionRequest(req, res, pathname); if (functionHandled !== false) return;
