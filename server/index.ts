@@ -333,10 +333,52 @@ async function paypalToken() {
 async function initiatePayPal(body: any) {
   if (!process.env.PAYPAL_CLIENT_ID || !process.env.PAYPAL_SECRET_KEY_1) throw new Error('PayPal is not configured in Manus secrets');
   const { base, token } = await paypalToken();
-  const response = await fetch(`${base}/v2/checkout/orders`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'PayPal-Request-Id': String(body.orderId || newId()) }, signal: AbortSignal.timeout(providerRequestTimeoutMs), body: JSON.stringify({ intent: 'CAPTURE', purchase_units: [{ reference_id: String(body.orderId || ''), amount: { currency_code: body.currency || 'ZAR', value: Number(body.amount || 0).toFixed(2) } }], application_context: { return_url: body.successUrl, cancel_url: body.cancelUrl, user_action: 'PAY_NOW' } }) });
+  // PayPal does not accept ZAR directly. If currency is ZAR, convert to USD.
+  let currencyCode = String(body.currency || 'USD').toUpperCase();
+  let amountVal = Number(body.amount || 0);
+  if (currencyCode === 'ZAR') {
+    currencyCode = 'USD';
+    const rate = 18.5; // standard conversion rate
+    amountVal = Math.max(1, Math.round((amountVal / rate) * 100) / 100);
+  }
+  const response = await fetch(`${base}/v2/checkout/orders`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'PayPal-Request-Id': String(body.orderId || newId())
+    },
+    signal: AbortSignal.timeout(providerRequestTimeoutMs),
+    body: JSON.stringify({
+      intent: 'CAPTURE',
+      purchase_units: [{
+        reference_id: String(body.orderId || ''),
+        description: String(body.itemName || 'Purely Health Nutra order').slice(0, 127),
+        amount: {
+          currency_code: currencyCode,
+          value: amountVal.toFixed(2)
+        }
+      }],
+      application_context: {
+        return_url: body.successUrl,
+        cancel_url: body.cancelUrl,
+        user_action: 'PAY_NOW'
+      }
+    })
+  });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new ProviderError('PayPal', `PayPal order creation failed: ${String(result.message || result.details?.[0]?.description || result.error_description || 'upstream request rejected').slice(0, 300)}`, response.status === 401 || response.status === 403 ? 424 : 422, response.status);
-  return { success: true, orderId: result.id, approvalUrl: result.links?.find((link: any) => link.rel === 'approve')?.href, status: result.status };
+  if (!response.ok) {
+    const detailMsg = JSON.stringify(result.details || result);
+    throw new ProviderError('PayPal', `PayPal order creation failed: ${detailMsg.slice(0, 400)}`, response.status === 401 || response.status === 403 ? 424 : 422, response.status);
+  }
+  return {
+    success: true,
+    orderId: result.id,
+    approvalUrl: result.links?.find((link: any) => link.rel === 'approve')?.href,
+    status: result.status,
+    convertedCurrency: currencyCode,
+    convertedAmount: amountVal
+  };
 }
 
 async function createGuestOrder(body: any) {
