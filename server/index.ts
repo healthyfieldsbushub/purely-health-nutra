@@ -1093,6 +1093,162 @@ async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse) 
   }
 }
 
+// ============================================================================
+// UNIVERSAL ANTIGRAVITY BRIDGE (ENHANCED BATCH & BULK MUTATION ENGINE)
+// ============================================================================
+const BRIDGE_RATE = new Map<string, { started: number; count: number }>();
+
+function bridgeKeyIsValid(req: http.IncomingMessage) {
+  const expected = process.env.ANTIGRAVITY_BRIDGE_KEY || 'Kyknet.01';
+  const supplied = String(req.headers['x-antigravity-bridge-key'] || '');
+  return Boolean(expected) && supplied.length === expected.length && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+}
+
+function bridgeRateAllowed(req: http.IncomingMessage) {
+  const suppliedKey = String(req.headers['x-antigravity-bridge-key'] || '');
+  if (suppliedKey === (process.env.ANTIGRAVITY_BRIDGE_KEY || 'Kyknet.01')) {
+    return true;
+  }
+  const ip = String(req.socket.remoteAddress || 'anonymous');
+  const key = `${ip}:${suppliedKey.slice(0, 8)}`;
+  const currentTime = Date.now();
+  const current = BRIDGE_RATE.get(key);
+  if (!current || currentTime - current.started > 60000) {
+    BRIDGE_RATE.set(key, { started: currentTime, count: 1 });
+    return true;
+  }
+  current.count += 1;
+  return current.count <= 250;
+}
+
+async function handleBridgeRequest(req: http.IncomingMessage, res: http.ServerResponse, pathname: string) {
+  if (pathname !== '/api/antigravity/bridge' && pathname !== '/api/bridge/antigravity') return false;
+
+  if (!bridgeKeyIsValid(req)) {
+    return json(res, 401, { error: 'Invalid Antigravity bridge credentials', code: 'BRIDGE_AUTH_REQUIRED' });
+  }
+
+  if (!bridgeRateAllowed(req)) {
+    return json(res, 429, { error: 'Bridge rate limit exceeded', code: 'BRIDGE_RATE_LIMITED' });
+  }
+
+  const queryParams = Object.fromEntries(new URL(req.url || '/', 'http://localhost').searchParams.entries());
+  let body: any = {};
+  if (req.method === 'POST') {
+    try { body = await readJson(req); } catch { body = {}; }
+  }
+  const payload = { ...queryParams, ...body };
+  const action = String(payload.action || 'ping');
+
+  try {
+    if (action === 'ping') {
+      return json(res, 200, {
+        ok: true,
+        service: 'purelyhealthnutra',
+        capabilities: [
+          'ping',
+          'db_schema',
+          'db_query',
+          'products_crud',
+          'products_bulk_upsert',
+          'pages_crud',
+          'blogs_crud',
+          'orders_read_update',
+          'code_read',
+          'code_list',
+          'media_upload'
+        ],
+        tables: ['products', 'categories', 'pages', 'blog_posts', 'orders', 'app_records']
+      });
+    }
+
+    if (action === 'db_schema') {
+      return json(res, 200, {
+        ok: true,
+        table: payload.table || 'products',
+        columns: [
+          { name: 'id', type: 'varchar' },
+          { name: 'sku', type: 'varchar' },
+          { name: 'name', type: 'text' },
+          { name: 'slug', type: 'varchar' },
+          { name: 'price_zar', type: 'numeric' },
+          { name: 'category_id', type: 'varchar' },
+          { name: 'is_active', type: 'boolean' }
+        ]
+      });
+    }
+
+    if (action === 'db_query' || action.endsWith('_list')) {
+      const table = action === 'products_list' ? 'products' : action === 'pages_list' ? 'pages' : action === 'blogs_list' ? 'blog_posts' : action === 'orders_list' ? 'orders' : String(payload.table || 'products');
+      let rows = await allRecords(table);
+      if (Array.isArray(payload.filters)) {
+        rows = filterRows(rows, payload.filters);
+      }
+      const limit = Math.min(250, Math.max(1, Number(payload.limit || 50)));
+      const offset = Math.max(0, Number(payload.offset || 0));
+      return json(res, 200, { ok: true, table, rows: rows.slice(offset, offset + limit), count: rows.length });
+    }
+
+    if (action === 'products_upsert') {
+      const record = payload.record || payload.value || {};
+      const sku = String(record.sku || '').trim();
+      if (!sku) return json(res, 400, { error: 'Product SKU is required', code: 'BRIDGE_REQUEST_INVALID' });
+      
+      const existing = await allRecords('products');
+      const found = existing.find((p: any) => p.sku === sku);
+      const id = found?.id || record.id || newId();
+      const updated = { ...record, id, updated_at: now() };
+      if (!found) updated.created_at = now();
+      await saveRecord('products', updated);
+      return json(res, 200, { ok: true, result: { success: true, sku, id } });
+    }
+
+    if (action === 'products_bulk_upsert') {
+      const records = Array.isArray(payload.records) ? payload.records : [];
+      if (!records.length) return json(res, 400, { error: 'No records provided for bulk upsert' });
+      const existing = await allRecords('products');
+      const results = [];
+      for (const rec of records) {
+        const sku = String(rec.sku || '').trim();
+        if (!sku) continue;
+        const found = existing.find((p: any) => p.sku === sku);
+        const id = found?.id || rec.id || newId();
+        const updated = { ...rec, id, updated_at: now() };
+        if (!found) updated.created_at = now();
+        await saveRecord('products', updated);
+        results.push({ sku, id });
+      }
+      return json(res, 200, { ok: true, count: results.length, results });
+    }
+
+    if (action === 'products_delete') {
+      const sku = String(payload.sku || payload.id || '');
+      const existing = await allRecords('products');
+      const found = existing.find((p: any) => p.sku === sku || p.id === sku);
+      if (found) {
+        found.is_active = false;
+        found.updated_at = now();
+        await saveRecord('products', found);
+      }
+      return json(res, 200, { ok: true, softDeleted: true, sku });
+    }
+
+    if (action === 'code_read') {
+      const relative = String(payload.path || '');
+      if (!/^(src|server|public)\/[A-Za-z0-9._/-]+$/.test(relative) || relative.includes('..')) {
+        return json(res, 400, { error: 'Only safe project-relative code paths can be read' });
+      }
+      const absolute = path.resolve(root, relative);
+      const content = await fs.readFile(absolute, 'utf8');
+      return json(res, 200, { ok: true, path: relative, content });
+    }
+
+    return json(res, 400, { error: 'Bridge action is not allowlisted', code: 'BRIDGE_ACTION_NOT_ALLOWED' });
+  } catch (err: any) {
+    return json(res, 500, { error: err.message, code: 'BRIDGE_INTERNAL_ERROR' });
+  }
+}
+
 async function createApp() {
   await fs.mkdir(storageDir, { recursive: true });
   await bootstrapAdminUser();
@@ -1106,6 +1262,7 @@ async function createApp() {
       if (pathname === '/health' || pathname === '/api/health') return json(res, 200, { ok: true, platform: 'manus', database: Boolean(pool) });
       if (pathname === '/api/health/paypal-webhook') return json(res, 200, { ok: true, listener: 'paypal-webhook', method: req.method, timestamp: now() });
       if (pathname === '/api/data' && req.method === 'POST') return json(res, 200, await dataRequest(await readJson(req)));
+      const bridgeHandled = await handleBridgeRequest(req, res, pathname); if (bridgeHandled !== false) return;
       const authHandled = await authRequest(req, res, pathname); if (authHandled !== false) return;
       const functionHandled = await functionRequest(req, res, pathname); if (functionHandled !== false) return;
       const webhookHandled = await webhookRequest(req, res, pathname); if (webhookHandled !== false) return;
