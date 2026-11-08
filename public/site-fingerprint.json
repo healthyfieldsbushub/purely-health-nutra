@@ -1,0 +1,17 @@
+{
+  "brand": "Purely Health Nutra",
+  "domain": "https://purelyhealthnutra.company",
+  "fingerprint_algorithm": "SHA-256",
+  "website_fingerprint": "fc7251adc35256f9d7d2a22ae52862b5d45d9c64309b1b9ac4a7ed0037380891",
+  "assets": {
+    "spirulina": {"path": "/images/products/spirulina-live-platensis.webp", "fingerprint": "db236d7d652151f137a46e1e1358083146a9e4dd1bd2459670e9eb2f4399c492", "source_fingerprint": "155fc1fda7a338f30320da41f5ed062bb52cf00768add40e3014317745115c2c", "dimensions": "800x800", "format": "WebP", "size_bytes": 44984},
+    "chlorella_vulgaris": {"path": "/images/products/chlorella-live-vulgaris.webp", "fingerprint": "39120384ec5c5a9d2e8bfbff0010e1d8ba00e25599e257b49b1157f5967fe33d", "source_fingerprint": "680bceee99e41fb9c486dab07be835dfdaf0b4e10a5f0e2bb6eacc12086db0ff", "dimensions": "800x800", "format": "WebP", "size_bytes": 48784},
+    "water_kefir_grains": {"path": "/images/products/water-kefir-grains.webp", "fingerprint": "9720a3ee2d0e8d2708b1657d3c733623c45bec4a5fc14bea78fa7ab9c453b176", "source_fingerprint": "c1d9d0c06d80294fce8bcaa0e405037e6aff51a01f0bbf979189934a7157598c", "dimensions": "800x800", "format": "WebP", "size_bytes": 47122},
+    "milk_kefir_grains": {"path": "/images/products/milk-kefir-grains.webp", "fingerprint": "cbfe83320328c6c17a021162de63160fcd63aca5f59ace074c2c0a2aa137cb11", "source_fingerprint": "43474c137c16ee7111f6e19213faba1869a646ecf5e59733bae4412a287850f6", "dimensions": "800x800", "format": "WebP", "size_bytes": 40598},
+    "kombucha_scoby": {"path": "/images/products/kombucha-scoby.webp", "fingerprint": "c19479fa454639264f28b7f8771c317d8e8aed2c1d0b31271cc4e86995c13ffe", "source_fingerprint": "6b78b9910934638da0f028ca8af995bf0385c9e5287af880c49496ce8064feb6", "dimensions": "800x800", "format": "WebP", "size_bytes": 44702},
+    "ruby": {"path": "/images/products/ruby-dragon-fruit.webp", "fingerprint": "515b83c840f4fe4a73f6933e6b791ccc5c4bd4724890b9031a5043fef1b1a8a2", "source_fingerprint": "55059a1381e7b2c5f3697f82034698acf31c81552817e0a74823a9071bf28548", "dimensions": "800x800", "format": "WebP", "size_bytes": 108890},
+    "sweet_white_crystal": {"path": "/images/products/sweet-white-crystal.webp", "fingerprint": "6d01f9cfc88b6b8410c26d32d913e683ce07598312660431283e349494f9cbba", "source_fingerprint": "71d9b9af3a240f9d92af3692676511b3c755951d5d6e4460ec5464d5237bee2f", "dimensions": "800x800", "format": "WebP", "size_bytes": 74064},
+    "rare_black_dragon": {"path": "/images/products/rare-black-dragon-fruit.webp", "fingerprint": "f34050d36e45b4bf196999d73fde9f454e54afd7fadca23d67a4bf89257ff109", "source_fingerprint": "e701f81c9bd82759803323caad8cfd62b2fe258d5957b7e4de29b0fa95a844a8", "dimensions": "800x800", "format": "WebP", "size_bytes": 119170}
+  },
+  "purpose": "Public verification record for the Purely Health Nutra website and optimized product images."
+}
